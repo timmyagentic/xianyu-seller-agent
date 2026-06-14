@@ -37,6 +37,7 @@ class XianyuLive:
         self.device_id = generate_device_id(self.myid)
         self.context_manager = ChatContextManager()
         self.reply_bot = reply_bot or XianyuReplyBot()
+        self.auto_reply_enabled = os.getenv("AUTO_REPLY_ENABLED", "true").lower() == "true"
         
         # 心跳相关配置
         self.heartbeat_interval = int(os.getenv("HEARTBEAT_INTERVAL", "15"))  # 心跳间隔，默认15秒
@@ -537,6 +538,10 @@ class XianyuLive:
             return
 
         logger.info(f"用户: {send_user_name} (ID: {send_user_id}), 商品: {item_id}, 会话: {chat_id}, 消息: {send_message}")
+
+        if not self.auto_reply_enabled:
+            logger.info(f"自动回复已关闭，跳过会话 {chat_id} 的普通聊天回复")
+            return
 
         # 如果当前会话处于人工接管模式，不进行自动回复
         if self.is_manual_mode(chat_id):

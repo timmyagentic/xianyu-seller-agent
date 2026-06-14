@@ -78,6 +78,40 @@ class FakeDeliverySender:
         return True
 
 
+class FakeReplyBot:
+    def __init__(self):
+        self.calls = []
+        self.last_intent = "default"
+
+    def generate_reply(self, user_msg, item_desc, context=None):
+        self.calls.append({"user_msg": user_msg, "item_desc": item_desc, "context": context})
+        return "自动回复"
+
+
+def test_xianyu_live_skips_chat_reply_when_auto_reply_disabled():
+    live = XianyuLive.__new__(XianyuLive)
+    live.auto_reply_enabled = False
+    live.reply_bot = FakeReplyBot()
+    websocket = FakeWebSocket()
+    incoming = IncomingMessage(
+        chat_id="chat-1",
+        item_id="item-1",
+        sender_id="buyer-1",
+        sender_name="买家",
+        text="你好",
+        message_id="msg-chat-1",
+        message_time=1781430000000,
+        raw={},
+        is_from_self=False,
+        kind="chat",
+    )
+
+    asyncio.run(live.handle_incoming_message(incoming, websocket))
+
+    assert live.reply_bot.calls == []
+    assert websocket.sent == []
+
+
 def _paid_order_message():
     return IncomingMessage(
         chat_id="chat-1",

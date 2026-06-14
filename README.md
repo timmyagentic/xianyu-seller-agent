@@ -116,7 +116,7 @@ python main.py listing status
 - `MODEL_BASE_URL=https://api-inference.modelscope.cn/v1` 与 `MODEL_NAME=deepseek-ai/DeepSeek-V4-Pro`：默认使用 ModelScope 的 OpenAI 兼容接口；真实 `API_KEY` 只写入本地 `.env`。
 - `LLM_ENABLE_SEARCH=false`：默认不发送供应商特定的联网搜索扩展参数。
 - `COOKIE_REFRESH_ENABLED=true`：默认每 10 分钟调用登录态续期接口合并 Set-Cookie，减少 `_m_h5_tk` 令牌过期导致的掉线；Session 过期、滑块或风控仍需人工重新登录。
-- `AUTO_REPLY_ENABLED=true`：自动回复入口保留为默认可用。
+- `AUTO_REPLY_ENABLED=true`：控制普通买家聊天是否进入 LLM 自动回复；付款完成消息仍由 `AUTO_DELIVERY_ENABLED` 单独控制。
 - `AUTO_DELIVERY_ENABLED=false`：自动发货默认关闭。确认商品发货配置、库存和测试订单后，才在本地 `.env` 改成 `true`。
 - `AUTO_CONFIRM_DELIVERY_ENABLED=false`：自动确认发货默认关闭。
 - `AUTO_RELIST_ENABLED=false`：真实重新上架默认关闭。
