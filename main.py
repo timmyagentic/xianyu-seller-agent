@@ -3,6 +3,7 @@ import json
 import asyncio
 import time
 import os
+import argparse
 import websockets
 from loguru import logger
 from dotenv import load_dotenv, set_key
@@ -14,6 +15,7 @@ import random
 from utils.xianyu_utils import generate_mid, generate_uuid, trans_cookies, generate_device_id, decrypt
 from XianyuAgent import XianyuReplyBot
 from context_manager import ChatContextManager
+from services.delivery.store import DeliveryStore
 from services.messages import MessageDeduplicator, MessageParser
 from xianyu_qr_login import QRLoginError, run_qr_login_cli
 
@@ -725,6 +727,62 @@ def run_qr_login_command():
     logger.info("扫码登录 Cookie 已保存至 .env")
 
 
+def build_cli_parser():
+    parser = argparse.ArgumentParser(prog="python main.py")
+    subparsers = parser.add_subparsers(dest="command")
+
+    delivery_parser = subparsers.add_parser("delivery", help="管理本地自动发货配置")
+    delivery_parser.add_argument("--db-path", default=os.getenv("DB_PATH", "data/chat_history.db"))
+    delivery_subparsers = delivery_parser.add_subparsers(dest="delivery_command", required=True)
+
+    add_parser = delivery_subparsers.add_parser("add", help="新增发货配置")
+    add_parser.add_argument("--item-id", required=True)
+    add_parser.add_argument("--type", required=True, choices=["text", "data", "api"], dest="delivery_type")
+    add_parser.add_argument("--content", default="")
+    add_parser.add_argument("--name", default="")
+    add_parser.add_argument("--disabled", action="store_true")
+
+    list_parser = delivery_subparsers.add_parser("list", help="列出发货配置")
+    list_parser.add_argument("--item-id")
+
+    return parser
+
+
+def run_cli(argv=None):
+    parser = build_cli_parser()
+    args = parser.parse_args(argv)
+
+    if args.command == "delivery":
+        store = DeliveryStore(db_path=args.db_path)
+        if args.delivery_command == "add":
+            config_id = store.add_config(
+                item_id=args.item_id,
+                name=args.name or args.item_id,
+                delivery_type=args.delivery_type,
+                content=args.content,
+                enabled=not args.disabled,
+            )
+            print(json.dumps({"id": config_id, "item_id": args.item_id}, ensure_ascii=False))
+            return 0
+        if args.delivery_command == "list":
+            configs = store.list_configs(item_id=args.item_id)
+            payload = [
+                {
+                    "id": config.id,
+                    "item_id": config.item_id,
+                    "name": config.name,
+                    "type": config.delivery_type,
+                    "enabled": config.enabled,
+                }
+                for config in configs
+            ]
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            return 0
+
+    parser.print_help()
+    return 0
+
+
 if __name__ == '__main__':
     # 加载环境变量
     if os.path.exists(".env"):
@@ -752,6 +810,9 @@ if __name__ == '__main__':
         except QRLoginError as e:
             logger.error(f"扫码登录失败: {e}")
             sys.exit(1)
+
+    if len(sys.argv) > 1 and sys.argv[1] in {"delivery"}:
+        sys.exit(run_cli(sys.argv[1:]))
     
     # 交互式检查并补全配置
     check_and_complete_env()

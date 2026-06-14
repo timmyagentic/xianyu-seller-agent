@@ -188,25 +188,25 @@ git commit -m "feat: add shared message parser"
 - Modify: `context_manager.py`
 - Modify: `main.py`
 
-- [ ] **Step 1: Write failing delivery store tests**
+- [x] **Step 1: Write failing delivery store tests**
 
 Cover `delivery_configs`, `delivery_inventory`, and `delivery_logs` creation; adding a text config; enabling/disabling config; adding data inventory rows; and listing configs by `item_id`.
 
-- [ ] **Step 2: Write failing content tests**
+- [x] **Step 2: Write failing content tests**
 
 Cover variable replacement for `{order_id}`, `{item_id}`, `{buyer_id}`, `{buyer_name}`, `{item_title}`, `{order_quantity}`, and safe behavior for unknown variables.
 
-- [ ] **Step 3: Run tests to verify failures**
+- [x] **Step 3: Run tests to verify failures**
 
 Run: `python -m pytest tests/test_delivery_store.py tests/test_delivery_content.py -q`
 
 Expected: fail because delivery modules do not exist.
 
-- [ ] **Step 4: Implement delivery store and content rendering**
+- [x] **Step 4: Implement delivery store and content rendering**
 
 Use `sqlite3` transactions and explicit status values. Do not add external services. Add CLI handlers for `python main.py delivery add ...` and `python main.py delivery list`.
 
-- [ ] **Step 5: Verify**
+- [x] **Step 5: Verify**
 
 Run:
 
@@ -218,7 +218,7 @@ python main.py delivery --help
 
 Expected: compile succeeds, tests pass, and CLI help prints delivery commands without requiring cookies.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add main.py context_manager.py services/delivery tests README.md docs/reference-implementation-map.md

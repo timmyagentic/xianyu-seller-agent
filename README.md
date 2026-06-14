@@ -18,7 +18,7 @@
 
 ## 当前仓库状态
 
-当前仓库已迁入 `XianyuAutoAgent` 的自动回复基线代码，并补充了本地 Python 脚手架和共享消息解析层。自动发货和重新上架仍在后续阶段实现。现有文档和项目文件用于约束后续实现边界：
+当前仓库已迁入 `XianyuAutoAgent` 的自动回复基线代码，并补充了本地 Python 脚手架、共享消息解析层和 SQLite 发货配置 CLI。自动发货触发和重新上架仍在后续阶段实现。现有文档和项目文件用于约束后续实现边界：
 
 - [MVP 设计](docs/superpowers/specs/2026-06-14-xianyu-seller-agent-mvp-design.md)
 - [参考实现映射](docs/reference-implementation-map.md)
@@ -81,6 +81,7 @@ python main.py
 
 ```bash
 python main.py delivery add --item-id 123 --type text --content "..."
+python main.py delivery list --item-id 123
 python main.py listing relist --item-id 123
 python main.py listing relist relist/item-001.json
 python main.py listing status
