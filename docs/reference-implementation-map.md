@@ -7,7 +7,7 @@
 | 项目 | 本项目中的角色 | 使用规则 |
 | --- | --- | --- |
 | `/Volumes/SamsungDisk/Code/XianyuAutoAgent` | 自动回复主基线 | 优先完整迁入，保持行为一致，再做小幅结构整理 |
-| `/Volumes/SamsungDisk/Code/xianyu-auto-reply` | 自动发货、自动上架、订单和发布参考库 | 只抽业务实现和协议细节，避免带入重后台架构 |
+| `/Volumes/SamsungDisk/Code/xianyu-auto-reply` | 自动发货、重新上架、订单和商品管理参考库 | 只抽业务实现和协议细节，避免带入重后台架构 |
 
 ## 自动回复
 
@@ -38,21 +38,23 @@
 | 订单详情接口 | `auto_delivery_handler.py` 中 `_fetch_order_detail_from_api` | 抽到 `XianyuApis.py` 或 `services/delivery/orders.py` |
 | 发货日志 | `auto_delivery_handler.py` 的 `_record_delivery_log` 思路 | 落地为 `delivery_logs`，不接入后台消息日志表 |
 | 禁止重复发货 | `can_auto_delivery`、`mark_delivery_sent`、锁相关逻辑 | 第一版用订单号唯一约束和进程内锁即可 |
+| `data` 库存消费 | `auto_delivery_handler.py` 中 `consume_batch_data` 的业务意图 | 不能照搬“读一行再删除”的弱边界；落地时必须用 SQLite 事务先按订单唯一预占库存行，发送成功后标记 `sent`，失败保留为可重试或释放 |
 
 暂不迁入：多级代理卡券、亦凡 API、免拼、自动确认发货、买家信用拦截、Redis 锁、后台通知。
 
-## 自动上架
+## 重新上架
 
 | 能力 | 参考文件 | 迁移说明 |
 | --- | --- | --- |
-| Playwright 发布器 | `xianyu-auto-reply/backend-web/app/services/xianyu_publisher.py` | 抽出图片上传、表单填写、价格、包邮、地址、发布按钮流程 |
-| 卖家发布页适配 | `xianyu-auto-reply/common/services/promotion_xianyu_publisher.py` | 参考 `seller.goofish.com` 发布入口和库存填写 |
-| 发布执行编排 | `xianyu-auto-reply/common/services/promotion_publish_execution_service.py` | 改写为本地 CLI：校验账号、解析草稿、调用发布器、记录结果 |
-| 发布追踪码 | `promotion/backend/app/services/publish_rule_scheduler.py` | 保留标题追踪码思路，用于发布后回查商品 ID |
-| 发布后绑定发货内容 | `promotion/backend/app/services/publish_coupon_card_service.py` | 不创建后台卡券，改为写入或更新本地 `delivery_configs` |
-| 图片路径处理 | `xianyu_publisher.py` 的 `_resolve_upload_image_path` | 支持本地路径和远程图片下载，临时文件要清理 |
+| 商品同步和归属校验 | `xianyu-auto-reply/common/services/item_service.py` | 参考 `fetch_all_items_from_account`、`get_item` 和 `update_item` 思路；MVP 只维护本地 SQLite 商品快照，不迁入 SQLAlchemy/Redis |
+| 商品操作 API 调用模式 | `xianyu-auto-reply/promotion/backend/app/services/item_delete_api_service.py` | 参考 mtop seller API 的签名、Cookie、Set-Cookie 合并和 token 过期重试模式；不要复用删除动作本身 |
+| Playwright 兜底浏览器控制 | `xianyu-auto-reply/common/services/promotion_xianyu_publisher.py`、`backend-web/app/services/xianyu_publisher.py` | 只复用 Cookie 注入、登录状态/风控检测、截图和页面等待经验；不要走空白发布表单、图片上传和新建商品流程 |
+| 商品管理数量/状态判断 | `promotion/backend/app/services/publish_rule_scheduler.py`、`common/services/item_service.py` | 参考商品同步后的总数、标题、item_id 回查；重新上架必须先确认商品属于当前账号 |
+| 上架后绑定发货内容 | `promotion/backend/app/services/publish_coupon_card_service.py` | 不创建后台卡券，改为写入或更新本地 `delivery_configs`，绑定目标 `item_id` |
 
-暂不迁入：素材库后台、发布规则定时器、返佣选品、发布删除规则、用户权限和管理页面。
+MVP 重新上架的目标是“对一个已经发布过、仍能在商品管理中找到的商品执行重新上架”。如果后续抓到稳定的闲鱼重新上架 mtop API，优先实现 API 路径；如果接口不可用，再用 Playwright 打开商品管理页定位目标商品并点击“重新上架”。无论哪条路径，都必须记录前置状态、动作结果、最终商品状态和截图或响应摘要。
+
+暂不迁入：素材库后台、发布规则定时器、返佣选品、从本地草稿创建全新商品、发布删除规则、用户权限和管理页面。
 
 ## 后续实现约束
 
