@@ -7,11 +7,14 @@ import requests
 from loguru import logger
 from utils.xianyu_utils import generate_sign
 from services.delivery.orders import is_token_expired_ret, parse_order_detail_response
+from services.listing.relist import map_relist_failure_reason, parse_relist_api_response
 
 
 class XianyuApis:
     parse_order_detail_response = staticmethod(parse_order_detail_response)
     is_token_expired_ret = staticmethod(is_token_expired_ret)
+    parse_relist_api_response = staticmethod(parse_relist_api_response)
+    map_relist_failure_reason = staticmethod(map_relist_failure_reason)
 
     def __init__(self):
         self.url = 'https://h5api.m.goofish.com/h5/mtop.taobao.idlemessage.pc.login.token/1.0/'

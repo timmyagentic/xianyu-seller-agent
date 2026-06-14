@@ -137,6 +137,52 @@ class DeliveryStore:
                 (1 if enabled else 0, now, config_id),
             )
 
+    def upsert_config_for_item(
+        self,
+        *,
+        item_id: str,
+        name: str,
+        delivery_type: str,
+        content: str,
+        enabled: bool = True,
+        api_config: str | None = None,
+    ) -> int:
+        if delivery_type not in VALID_DELIVERY_TYPES:
+            raise ValueError(f"delivery_type must be one of {sorted(VALID_DELIVERY_TYPES)}")
+
+        now = datetime.now().isoformat()
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT id
+                FROM delivery_configs
+                WHERE item_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (item_id,),
+            ).fetchone()
+            if row:
+                conn.execute(
+                    """
+                    UPDATE delivery_configs
+                    SET name = ?, delivery_type = ?, content = ?, api_config = ?, enabled = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (name, delivery_type, content, api_config, 1 if enabled else 0, now, row[0]),
+                )
+                return int(row[0])
+
+            cursor = conn.execute(
+                """
+                INSERT INTO delivery_configs
+                (item_id, name, delivery_type, content, api_config, enabled, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (item_id, name, delivery_type, content, api_config, 1 if enabled else 0, now, now),
+            )
+            return int(cursor.lastrowid)
+
     def add_inventory(self, config_id: int, contents: Iterable[str]) -> list[int]:
         now = datetime.now().isoformat()
         row_ids: list[int] = []

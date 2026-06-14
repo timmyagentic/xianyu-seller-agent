@@ -46,13 +46,13 @@
 
 | 能力 | 参考文件 | 迁移说明 |
 | --- | --- | --- |
-| 商品同步和归属校验 | `xianyu-auto-reply/common/services/item_service.py` | 参考 `fetch_all_items_from_account`、`get_item` 和 `update_item` 思路；MVP 只维护本地 SQLite 商品快照，不迁入 SQLAlchemy/Redis |
-| 商品操作 API 调用模式 | `xianyu-auto-reply/promotion/backend/app/services/item_delete_api_service.py` | 参考 mtop seller API 的签名、Cookie、Set-Cookie 合并和 token 过期重试模式；不要复用删除动作本身 |
-| Playwright 兜底浏览器控制 | `xianyu-auto-reply/common/services/promotion_xianyu_publisher.py`、`backend-web/app/services/xianyu_publisher.py` | 只复用 Cookie 注入、登录状态/风控检测、截图和页面等待经验；不要走空白发布表单、图片上传和新建商品流程 |
-| 商品管理数量/状态判断 | `promotion/backend/app/services/publish_rule_scheduler.py`、`common/services/item_service.py` | 参考商品同步后的总数、标题、item_id 回查；重新上架必须先确认商品属于当前账号 |
-| 上架后绑定发货内容 | `promotion/backend/app/services/publish_coupon_card_service.py` | 不创建后台卡券，改为写入或更新本地 `delivery_configs`，绑定目标 `item_id` |
+| 商品同步和归属校验 | `xianyu-auto-reply/common/services/item_service.py` | 已参考 `fetch_all_items_from_account`、`get_item` 和 `update_item` 思路；MVP 读取本地 SQLite `items` 商品快照确认归属，不迁入 SQLAlchemy/Redis |
+| 商品操作 API 调用模式 | `xianyu-auto-reply/promotion/backend/app/services/item_delete_api_service.py` | 已参考 mtop seller API 的签名、Cookie、Set-Cookie 合并和 token 过期重试模式，落地为可注入 API 结果边界；未硬编码未知重新上架接口，也不复用删除动作本身 |
+| Playwright 兜底浏览器控制 | `xianyu-auto-reply/common/services/promotion_xianyu_publisher.py`、`backend-web/app/services/xianyu_publisher.py` | 已落地 Cookie 域、商品管理 URL 和安全 fallback 命令描述；默认不启动浏览器，不走空白发布表单、图片上传和新建商品流程 |
+| 商品管理数量/状态判断 | `promotion/backend/app/services/publish_rule_scheduler.py`、`common/services/item_service.py` | 已基于商品快照状态、标题和 `item_id` 回查做 `already_active`、标题不匹配和归属失败判断 |
+| 上架后绑定发货内容 | `promotion/backend/app/services/publish_coupon_card_service.py` | 已改为 upsert 本地 `delivery_configs`，重新上架成功或已处于上架状态后绑定目标 `item_id` |
 
-MVP 重新上架的目标是“对一个已经发布过、仍能在商品管理中找到的商品执行重新上架”。如果后续抓到稳定的闲鱼重新上架 mtop API，优先实现 API 路径；如果接口不可用，再用 Playwright 打开商品管理页定位目标商品并点击“重新上架”。无论哪条路径，都必须记录前置状态、动作结果、最终商品状态和截图或响应摘要。
+MVP 重新上架的目标是“对一个已经发布过、仍能在商品管理中找到的商品执行重新上架”。当前实现先完成本地任务记录、归属校验、已上架幂等跳过、API 结果解析边界、Playwright fallback 命令构造和发货配置绑定。如果后续抓到稳定的闲鱼重新上架 mtop API，优先把真实调用接入现有可注入 API 边界；如果接口不可用，再在用户授权后用 Playwright 打开商品管理页定位目标商品并点击“重新上架”。无论哪条路径，都必须记录前置状态、动作结果、最终商品状态和截图或响应摘要。
 
 暂不迁入：素材库后台、发布规则定时器、返佣选品、从本地草稿创建全新商品、发布删除规则、用户权限和管理页面。
 

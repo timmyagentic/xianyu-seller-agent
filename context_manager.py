@@ -91,8 +91,10 @@ class ChatContextManager:
         conn.commit()
         conn.close()
         from services.delivery.store import initialize_delivery_schema
+        from services.listing.store import initialize_listing_schema
 
         initialize_delivery_schema(self.db_path)
+        initialize_listing_schema(self.db_path)
         logger.info(f"聊天历史数据库初始化完成: {self.db_path}")
         
 

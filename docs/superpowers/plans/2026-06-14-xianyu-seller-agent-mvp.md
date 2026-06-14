@@ -330,29 +330,29 @@ git commit -m "feat: add api delivery and order details"
 - Modify: `XianyuApis.py`
 - Modify: `main.py`
 
-- [ ] **Step 1: Write failing listing tests**
+- [x] **Step 1: Write failing listing tests**
 
 Cover relist JSON validation, item ownership validation, `already_active` behavior, API success result parsing, API failure reason mapping, Playwright fallback command construction, and post-success delivery config binding.
 
-- [ ] **Step 2: Run tests to verify failures**
+- [x] **Step 2: Run tests to verify failures**
 
 Run: `python -m pytest tests/test_listing_config.py tests/test_listing_relist.py -q`
 
 Expected: fail because listing modules do not exist.
 
-- [ ] **Step 3: Implement relisting API boundary and local job store**
+- [x] **Step 3: Implement relisting API boundary and local job store**
 
 Create `listing_jobs` persistence. Prefer API path through `XianyuApis` when a known endpoint is configured; otherwise return a structured `manual_required` or `playwright_required` result without pretending relist succeeded.
 
-- [ ] **Step 4: Implement Playwright fallback wrapper**
+- [x] **Step 4: Implement Playwright fallback wrapper**
 
 Add cookie injection and safety checks only. Do not bypass slider/risk-control verification. Store screenshot paths only when screenshots are produced by an authorized manual run.
 
-- [ ] **Step 5: Add CLI**
+- [x] **Step 5: Add CLI**
 
 Support `python main.py listing relist --item-id 123`, `python main.py listing relist relist/item-001.json`, and `python main.py listing status`.
 
-- [ ] **Step 6: Verify**
+- [x] **Step 6: Verify**
 
 Run:
 
@@ -364,7 +364,7 @@ python main.py listing --help
 
 Expected: pass and help prints without requiring real cookies.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add main.py XianyuApis.py services/listing services/delivery tests README.md docs/reference-implementation-map.md

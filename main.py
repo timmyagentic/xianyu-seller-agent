@@ -16,6 +16,8 @@ from utils.xianyu_utils import generate_mid, generate_uuid, trans_cookies, gener
 from XianyuAgent import XianyuReplyBot
 from context_manager import ChatContextManager
 from services.delivery.store import DeliveryStore
+from services.listing.relist import RelistService, load_relist_request
+from services.listing.store import ListingStore
 from services.messages import MessageDeduplicator, MessageParser
 from xianyu_qr_login import QRLoginError, run_qr_login_cli
 
@@ -745,6 +747,22 @@ def build_cli_parser():
     list_parser = delivery_subparsers.add_parser("list", help="列出发货配置")
     list_parser.add_argument("--item-id")
 
+    listing_parser = subparsers.add_parser("listing", help="管理已有商品重新上架任务")
+    listing_parser.add_argument("--db-path", default=os.getenv("DB_PATH", "data/chat_history.db"))
+    listing_subparsers = listing_parser.add_subparsers(dest="listing_command", required=True)
+
+    relist_parser = listing_subparsers.add_parser("relist", help="对已发布过的商品创建重新上架任务")
+    relist_parser.add_argument("config_path", nargs="?")
+    relist_parser.add_argument("--item-id")
+    relist_parser.add_argument("--expected-title", default="")
+    relist_parser.add_argument("--delivery-type", choices=["text", "data", "api"])
+    relist_parser.add_argument("--delivery-content", default="")
+    relist_parser.add_argument("--delivery-name", default="")
+    relist_parser.add_argument("--allow-playwright", action="store_true")
+
+    status_parser = listing_subparsers.add_parser("status", help="列出最近的重新上架任务")
+    status_parser.add_argument("--limit", type=int, default=20)
+
     return parser
 
 
@@ -776,6 +794,42 @@ def run_cli(argv=None):
                 }
                 for config in configs
             ]
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            return 0
+
+    if args.command == "listing":
+        listing_store = ListingStore(db_path=args.db_path)
+        delivery_store = DeliveryStore(db_path=args.db_path)
+        if args.listing_command == "relist":
+            if args.config_path:
+                request = load_relist_request(args.config_path)
+            else:
+                if not args.item_id:
+                    parser.error("listing relist requires --item-id or a config path")
+                payload = {
+                    "item_id": args.item_id,
+                    "expected_title": args.expected_title,
+                }
+                if args.delivery_type:
+                    payload["delivery"] = {
+                        "type": args.delivery_type,
+                        "content": args.delivery_content,
+                        "name": args.delivery_name or args.item_id,
+                    }
+                request = load_relist_request(payload)
+
+            service = RelistService(
+                listing_store=listing_store,
+                delivery_store=delivery_store,
+                allow_playwright=args.allow_playwright,
+            )
+            result = asyncio.run(service.relist(request))
+            print(json.dumps(result.__dict__, ensure_ascii=False, indent=2))
+            return 0
+
+        if args.listing_command == "status":
+            jobs = listing_store.list_jobs(limit=args.limit)
+            payload = [job.__dict__ for job in jobs]
             print(json.dumps(payload, ensure_ascii=False, indent=2))
             return 0
 
@@ -811,7 +865,7 @@ if __name__ == '__main__':
             logger.error(f"扫码登录失败: {e}")
             sys.exit(1)
 
-    if len(sys.argv) > 1 and sys.argv[1] in {"delivery"}:
+    if len(sys.argv) > 1 and sys.argv[1] in {"delivery", "listing", "--help", "-h"}:
         sys.exit(run_cli(sys.argv[1:]))
     
     # 交互式检查并补全配置
