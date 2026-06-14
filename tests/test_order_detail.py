@@ -1,7 +1,9 @@
 import json
+import time
 
 from services.delivery.orders import is_token_expired_ret, parse_order_detail_response
 from XianyuApis import XianyuApis
+from utils.xianyu_utils import generate_sign
 
 
 def test_parse_order_detail_response_extracts_quantity_amount_spec_and_receiver():
@@ -85,3 +87,54 @@ def test_xianyu_apis_get_order_detail_posts_signed_tid_request():
     assert calls[0]["params"]["api"] == "mtop.idle.web.trade.order.detail"
     assert calls[0]["params"]["sign"]
     assert json.loads(calls[0]["data"]["data"]) == {"tid": "1234567890126"}
+
+
+def test_xianyu_apis_retries_order_detail_with_set_cookie_token(monkeypatch):
+    api = XianyuApis()
+    api.session.cookies.update({"_m_h5_tk": "oldtoken_123", "unb": "seller-1"})
+    monkeypatch.setattr(api, "update_env_cookies", lambda: None)
+    monkeypatch.setattr(time, "sleep", lambda seconds: None)
+    calls = []
+
+    class FakeCookie:
+        def __init__(self, name, value):
+            self.name = name
+            self.value = value
+
+    class FakeResponse:
+        def __init__(self, payload, cookies=None):
+            self._payload = payload
+            self.cookies = cookies or []
+            self.headers = {"Set-Cookie": "1"} if cookies else {}
+
+        def json(self):
+            return self._payload
+
+    def fake_post(url, params, data, headers=None):
+        calls.append({"params": dict(params), "data": dict(data)})
+        expected_new_sign = generate_sign(params["t"], "newtoken", data["data"])
+        if len(calls) == 1:
+            return FakeResponse(
+                {"ret": ["FAIL_SYS_TOKEN_EXOIRED::令牌过期"]},
+                cookies=[
+                    FakeCookie("_m_h5_tk", "newtoken_456"),
+                    FakeCookie("_m_h5_tk_enc", "new_enc"),
+                ],
+            )
+        if params["sign"] == expected_new_sign:
+            return FakeResponse(
+                {
+                    "ret": ["SUCCESS::调用成功"],
+                    "data": {"components": [{"render": "orderInfoVO", "data": {"itemInfo": {"buyAmount": 2}}}]},
+                }
+            )
+        return FakeResponse({"ret": ["FAIL_SYS_TOKEN_EXOIRED::令牌过期"]})
+
+    api.session.post = fake_post
+
+    response = api.get_order_detail("1234567890126")
+
+    assert XianyuApis.parse_order_detail_response(response).quantity == 2
+    assert len(calls) == 2
+    assert calls[0]["params"]["sign"] == generate_sign(calls[0]["params"]["t"], "oldtoken", calls[0]["data"]["data"])
+    assert calls[1]["params"]["sign"] == generate_sign(calls[1]["params"]["t"], "newtoken", calls[1]["data"]["data"])

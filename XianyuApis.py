@@ -3,6 +3,7 @@ import os
 import re
 import sys
 import json
+from http.cookies import SimpleCookie
 
 import requests
 from loguru import logger
@@ -39,33 +40,67 @@ class XianyuApis:
         
     def clear_duplicate_cookies(self):
         """清理重复的cookies"""
-        # 创建一个新的CookieJar
-        new_jar = requests.cookies.RequestsCookieJar()
-        
-        # 记录已经添加过的cookie名称
-        added_cookies = set()
-        
-        # 按照cookies列表的逆序遍历（最新的通常在后面）
-        cookie_list = list(self.session.cookies)
-        cookie_list.reverse()
-        
-        for cookie in cookie_list:
-            # 如果这个cookie名称还没有添加过，就添加到新jar中
-            if cookie.name not in added_cookies:
-                new_jar.set_cookie(cookie)
-                added_cookies.add(cookie.name)
-                
-        # 替换session的cookies
-        self.session.cookies = new_jar
-        
-        # 更新完cookies后，更新.env文件
+        self._replace_session_cookies(self._cookie_dict())
         self.update_env_cookies()
+
+    def _cookie_dict(self) -> dict[str, str]:
+        cookies: dict[str, str] = {}
+        for cookie in list(self.session.cookies):
+            if cookie.name and cookie.value is not None:
+                cookies[cookie.name] = cookie.value
+        return cookies
+
+    def _cookie_value(self, name: str) -> str:
+        return self._cookie_dict().get(name, "")
+
+    def _replace_session_cookies(self, cookies: dict[str, str]) -> None:
+        new_jar = requests.cookies.RequestsCookieJar()
+        for name, value in cookies.items():
+            new_jar.set(name, value)
+        self.session.cookies = new_jar
+
+    def _merge_response_cookies(self, response) -> list[str]:
+        new_cookies: dict[str, str] = {}
+        for cookie in getattr(response, "cookies", []) or []:
+            if getattr(cookie, "name", None) and getattr(cookie, "value", None) is not None:
+                new_cookies[cookie.name] = cookie.value
+
+        header_values: list[str] = []
+        headers = getattr(response, "headers", {}) or {}
+        raw_headers = getattr(getattr(response, "raw", None), "headers", None)
+        if hasattr(raw_headers, "get_all"):
+            header_values.extend(raw_headers.get_all("Set-Cookie") or [])
+            header_values.extend(raw_headers.get_all("set-cookie") or [])
+        if hasattr(headers, "get"):
+            for header_name in ("Set-Cookie", "set-cookie"):
+                header_value = headers.get(header_name)
+                if header_value:
+                    header_values.append(header_value)
+
+        for header_value in header_values:
+            parsed = SimpleCookie()
+            try:
+                parsed.load(header_value)
+            except Exception:
+                continue
+            for name, morsel in parsed.items():
+                if name and morsel.value is not None:
+                    new_cookies[name] = morsel.value
+
+        if not new_cookies:
+            return []
+
+        merged = self._cookie_dict()
+        merged.update(new_cookies)
+        self._replace_session_cookies(merged)
+        self.update_env_cookies()
+        return list(new_cookies)
         
     def update_env_cookies(self):
         """更新.env文件中的COOKIES_STR"""
         try:
             # 获取当前cookies的字符串形式
-            cookie_str = '; '.join([f"{cookie.name}={cookie.value}" for cookie in self.session.cookies])
+            cookie_str = '; '.join([f"{name}={value}" for name, value in self._cookie_dict().items()])
             
             # 读取.env文件
             env_path = os.path.join(os.getcwd(), '.env')
@@ -107,13 +142,13 @@ class XianyuApis:
                 'fromSite': '77'
             }
             data = {
-                'hid': self.session.cookies.get('unb', ''),
+                'hid': self._cookie_value('unb'),
                 'ltl': 'true',
                 'appName': 'xianyu',
                 'appEntrance': 'web',
-                '_csrf_token': self.session.cookies.get('XSRF-TOKEN', ''),
+                '_csrf_token': self._cookie_value('XSRF-TOKEN'),
                 'umidToken': '',
-                'hsiz': self.session.cookies.get('cookie2', ''),
+                'hsiz': self._cookie_value('cookie2'),
                 'bizParams': 'taobaoBizLoginFrom=web',
                 'mainPage': 'false',
                 'isMobile': 'false',
@@ -124,11 +159,12 @@ class XianyuApis:
                 'documentReferer': 'https://www.goofish.com/',
                 'defaultView': 'hasLogin',
                 'umidTag': 'SERVER',
-                'deviceId': self.session.cookies.get('cna', '')
+                'deviceId': self._cookie_value('cna')
             }
             
             response = self.session.post(url, params=params, data=data)
             res_json = response.json()
+            self._merge_response_cookies(response)
             
             if res_json.get('content', {}).get('success'):
                 logger.debug("Login成功")
@@ -194,7 +230,7 @@ class XianyuApis:
             "priority": "u=1, i"
         }
         # 简单获取token，信任cookies已清理干净
-        token = self.session.cookies.get('_m_h5_tk', '').split('_')[0]
+        token = self._cookie_value('_m_h5_tk').split('_')[0]
         
         sign = generate_sign(params['t'], token, data_val)
         params['sign'] = sign
@@ -202,6 +238,7 @@ class XianyuApis:
         try:
             response = self.session.post('https://h5api.m.goofish.com/h5/mtop.taobao.idlemessage.pc.login.token/1.0/', headers=headers, params=params, data=data)
             res_json = response.json()
+            updated_cookies = self._merge_response_cookies(response)
             
             if isinstance(res_json, dict):
                 ret_value = res_json.get('ret', [])
@@ -244,10 +281,8 @@ class XianyuApis:
                             sys.exit(1)
 
                     logger.warning(f"Token API调用失败，错误信息: {ret_value}")
-                    # 处理响应中的Set-Cookie
-                    if 'Set-Cookie' in response.headers:
-                        logger.debug("检测到Set-Cookie，更新cookie")  # 降级为DEBUG并简化
-                        self.clear_duplicate_cookies()
+                    if updated_cookies:
+                        logger.debug(f"检测到Set-Cookie，已更新 {len(updated_cookies)} 个cookie字段")
                     time.sleep(0.5)
                     return self.get_token(device_id, retry_count + 1)
                 else:
@@ -289,7 +324,7 @@ class XianyuApis:
         }
         
         # 简单获取token，信任cookies已清理干净
-        token = self.session.cookies.get('_m_h5_tk', '').split('_')[0]
+        token = self._cookie_value('_m_h5_tk').split('_')[0]
         
         sign = generate_sign(params['t'], token, data_val)
         params['sign'] = sign
@@ -302,16 +337,15 @@ class XianyuApis:
             )
             
             res_json = response.json()
+            updated_cookies = self._merge_response_cookies(response)
             # 检查返回状态
             if isinstance(res_json, dict):
                 ret_value = res_json.get('ret', [])
                 # 检查ret是否包含成功信息
                 if not any('SUCCESS::调用成功' in ret for ret in ret_value):
                     logger.warning(f"商品信息API调用失败，错误信息: {ret_value}")
-                    # 处理响应中的Set-Cookie
-                    if 'Set-Cookie' in response.headers:
-                        logger.debug("检测到Set-Cookie，更新cookie")
-                        self.clear_duplicate_cookies()
+                    if updated_cookies:
+                        logger.debug(f"检测到Set-Cookie，已更新 {len(updated_cookies)} 个cookie字段")
                     time.sleep(0.5)
                     return self.get_item_info(item_id, retry_count + 1)
                 else:
@@ -334,7 +368,7 @@ class XianyuApis:
 
         timestamp = str(int(time.time()) * 1000)
         data_val = json.dumps({"tid": str(order_id)}, separators=(",", ":"))
-        token = self.session.cookies.get('_m_h5_tk', '').split('_')[0]
+        token = self._cookie_value('_m_h5_tk').split('_')[0]
         sign = generate_sign(timestamp, token, data_val)
         params = {
             'jsv': '2.7.2',
@@ -367,13 +401,13 @@ class XianyuApis:
                 headers=headers,
             )
             res_json = response.json()
+            updated_cookies = self._merge_response_cookies(response)
             if isinstance(res_json, dict):
                 ret_value = res_json.get('ret', [])
                 if not any('SUCCESS' in ret for ret in ret_value):
                     logger.warning(f"订单详情API调用失败，错误信息: {ret_value}")
-                    if 'Set-Cookie' in response.headers:
-                        logger.debug("检测到Set-Cookie，更新cookie")
-                        self.clear_duplicate_cookies()
+                    if updated_cookies:
+                        logger.debug(f"检测到Set-Cookie，已更新 {len(updated_cookies)} 个cookie字段")
                     time.sleep(0.5)
                     return self.get_order_detail(order_id, retry_count + 1)
                 logger.debug(f"订单详情获取成功: {order_id}")
