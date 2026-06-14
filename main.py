@@ -974,7 +974,7 @@ def _build_playwright_relist_executor(*, cookies_str: str, allow_playwright: boo
     if not allow_playwright or not cookies_str:
         return None
     screenshot_dir = os.getenv("AUTO_RELIST_SCREENSHOT_DIR", "data/relist-screenshots")
-    headless = os.getenv("AUTO_RELIST_PLAYWRIGHT_HEADLESS", "true").lower() != "false"
+    headless = os.getenv("AUTO_RELIST_PLAYWRIGHT_HEADLESS", os.getenv("PLAYWRIGHT_HEADLESS", "true")).lower() != "false"
     return PlaywrightRelistExecutor(
         cookies_str=cookies_str,
         headless=headless,

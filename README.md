@@ -18,7 +18,7 @@
 
 ## 当前仓库状态
 
-当前仓库已迁入 `XianyuAutoAgent` 的自动回复基线代码，并补充了本地 Python 脚手架、共享消息解析层、SQLite 发货配置 CLI、幂等虚拟发货服务、API 发货客户端、订单详情解析、重新上架任务记录、商品归属校验和上架后发货配置绑定。真实付款消息和真实重新上架点击仍需要账号授权后的人工验收。现有文档和项目文件用于约束后续实现边界：
+当前仓库已迁入 `XianyuAutoAgent` 的自动回复基线代码，并补充了本地 Python 脚手架、共享消息解析层、SQLite 发货配置 CLI、幂等虚拟发货服务、API 发货客户端、订单详情解析、重新上架任务记录、真实商品状态刷新、商品归属校验、授权 Playwright 重新上架执行器和上架后发货配置绑定。真实付款消息和真实重新上架仍需要账号授权后的人工验收；遇到登录失效、滑块、验证码或风控时只记录结构化失败，不做绕过。现有文档和项目文件用于约束后续实现边界：
 
 - [MVP 设计](docs/superpowers/specs/2026-06-14-xianyu-seller-agent-mvp-design.md)
 - [参考实现映射](docs/reference-implementation-map.md)
@@ -111,7 +111,9 @@ python main.py listing status
 
 `listing fetch-items` 会参考 `xianyu-auto-reply` 的商品同步策略，调用闲鱼 `mtop.idle.web.xyh.item.list` 在售分组接口，分页获取当前账号所有已发布商品并写入本地 `items` 快照表。
 
-`listing relist` 默认不会执行真实平台点击；它先检查本地商品快照，已上架时幂等记录 `already_active` 并刷新发货绑定，未上架且没有授权 API/浏览器执行器时记录 `manual_required` 或 `playwright_required`。`--stock` 会作为目标库存写入重上架任务，并在后续接入真实 API 或授权浏览器执行器时传递给执行边界。
+`listing relist` 会在 `COOKIES_STR` 存在时先通过当前账号刷新商品真实状态：优先查询在售列表，未命中时再用商品详情接口兜底，避免本地旧快照把下架/售出商品误判为 `already_active`。如果配置了 `XIANYU_RELIST_API`，会按 `xianyu-auto-reply` 的 seller mtop 操作模式签名调用该接口；未配置或 API 失败时，默认记录 `manual_required`，只有显式传入 `--allow-playwright` 才会打开授权浏览器执行器。
+
+授权 Playwright 执行器只处理“商品管理页已有目标商品并出现重新上架入口”的场景：它会设置目标库存、点击“重新上架/恢复上架/上架”，并且只有页面出现“操作成功/上架成功/已上架/在售”等确认文本后才记录 `relisted`。如果检测到登录页、滑块、验证码、风控提示、找不到目标商品、找不到按钮或点击后没有确认结果，会记录 `playwright_required` 和失败原因，必要时保存截图到 `AUTO_RELIST_SCREENSHOT_DIR`，不会伪造成功。`--stock` 会作为目标库存写入任务，并传递给 mtop API 或授权浏览器执行器。
 
 `listing auto-relist set` 用于配置“发货成功后自动重新上架”的商品级策略。运行时还必须开启 `AUTO_RELIST_ENABLED=true`；否则配置只会保存，不会在付款发货后触发。
 
@@ -128,7 +130,10 @@ python main.py listing status
 - `AUTO_DELIVERY_ENABLED=false`：自动发货默认关闭。确认商品发货配置、库存和测试订单后，才在本地 `.env` 改成 `true`。
 - `AUTO_CONFIRM_DELIVERY_ENABLED=false`：自动确认发货默认关闭。
 - `AUTO_RELIST_ENABLED=false`：发货后自动重新上架默认关闭；即使商品已配置 `listing auto-relist set`，未打开该开关也不会触发。
-- `AUTO_RELIST_ALLOW_PLAYWRIGHT=false`：默认不允许自动创建浏览器执行任务；遇到没有稳定 API 的真实重新上架时只记录 `manual_required`。
+- `XIANYU_RELIST_API=`：可选的真实重新上架 mtop API 名称。没有稳定接口证据时保持为空；代码只提供签名调用边界，不硬编码未知接口。
+- `AUTO_RELIST_ALLOW_PLAYWRIGHT=false`：默认不允许自动创建浏览器执行任务；开启后仍会在登录、滑块、验证码、风控或缺少页面确认时停止。
+- `AUTO_RELIST_SCREENSHOT_DIR=data/relist-screenshots`：授权浏览器路径保存页面证据的本地目录，默认不提交。
+- `AUTO_RELIST_PLAYWRIGHT_HEADLESS=true`：重新上架浏览器执行器是否无头运行；也兼容旧的 `PLAYWRIGHT_HEADLESS`。
 
 启用自动发货后，程序会监听“我已付款，等待你发货”“等待卖家发货”等付款完成消息，解析订单号、商品 ID、买家和会话，再按商品配置发货。同一订单已经写入 `sent` 日志后会跳过；`data` 库存会按订单购买数量先预占，发送成功后标记 `sent`，发送失败时保留为 `failed_retryable` 以便同一订单重试继续使用原 key。发货成功后，如果同时开启 `AUTO_RELIST_ENABLED=true` 且该商品存在启用的 `auto-relist` 配置，程序会创建重新上架任务并记录目标库存；失败只影响重新上架任务日志，不回滚已发货结果。
 
