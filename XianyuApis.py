@@ -8,13 +8,14 @@ from http.cookies import SimpleCookie
 import requests
 from loguru import logger
 from utils.xianyu_utils import generate_sign
-from services.delivery.orders import is_token_expired_ret, parse_order_detail_response
+from services.delivery.orders import is_session_expired_ret, is_token_expired_ret, parse_order_detail_response
 from services.listing.relist import map_relist_failure_reason, parse_relist_api_response
 
 
 class XianyuApis:
     parse_order_detail_response = staticmethod(parse_order_detail_response)
     is_token_expired_ret = staticmethod(is_token_expired_ret)
+    is_session_expired_ret = staticmethod(is_session_expired_ret)
     parse_relist_api_response = staticmethod(parse_relist_api_response)
     map_relist_failure_reason = staticmethod(map_relist_failure_reason)
 
@@ -52,6 +53,9 @@ class XianyuApis:
 
     def _cookie_value(self, name: str) -> str:
         return self._cookie_dict().get(name, "")
+
+    def get_cookie_string(self) -> str:
+        return '; '.join([f"{name}={value}" for name, value in self._cookie_dict().items()])
 
     def _replace_session_cookies(self, cookies: dict[str, str]) -> None:
         new_jar = requests.cookies.RequestsCookieJar()
@@ -99,8 +103,7 @@ class XianyuApis:
     def update_env_cookies(self):
         """更新.env文件中的COOKIES_STR"""
         try:
-            # 获取当前cookies的字符串形式
-            cookie_str = '; '.join([f"{name}={value}" for name, value in self._cookie_dict().items()])
+            cookie_str = self.get_cookie_string()
             
             # 读取.env文件
             env_path = os.path.join(os.getcwd(), '.env')
@@ -128,6 +131,117 @@ class XianyuApis:
                 logger.warning(".env文件中未找到COOKIES_STR配置项")
         except Exception as e:
             logger.warning(f"更新.env文件失败: {str(e)}")
+
+    def renew_login_cookies(self) -> dict:
+        """Use the login-user mtop API to proactively refresh mtop cookies."""
+        data_val = '{}'
+        token = self._cookie_value('_m_h5_tk').split('_')[0]
+        if not token:
+            logger.warning("Cookie缺少_m_h5_tk，无法执行登录态续期")
+            return {
+                "status": "token_empty",
+                "message": "令牌为空，需要重新登录",
+                "updated_cookie_names": [],
+            }
+
+        timestamp = str(int(time.time() * 1000))
+        params = {
+            'jsv': '2.7.2',
+            'appKey': '34839810',
+            't': timestamp,
+            'sign': generate_sign(timestamp, token, data_val),
+            'v': '1.0',
+            'type': 'originaljson',
+            'accountSite': 'xianyu',
+            'dataType': 'json',
+            'timeout': '20000',
+            'api': 'mtop.taobao.idlemessage.pc.loginuser.get',
+            'sessionOption': 'AutoLoginOnly',
+            'spm_cnt': 'a21ybx.im.0.0',
+        }
+        headers = {
+            'accept': 'application/json',
+            'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'cache-control': 'no-cache',
+            'content-type': 'application/x-www-form-urlencoded',
+            'origin': 'https://www.goofish.com',
+            'pragma': 'no-cache',
+            'referer': 'https://www.goofish.com/',
+            'sec-ch-ua': '"Chromium";v="146", "Not-A.Brand";v="24", "Google Chrome";v="146"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-site',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+            'cookie': self.get_cookie_string().replace('\n', '').replace('\r', ''),
+        }
+
+        try:
+            response = self.session.post(
+                'https://h5api.m.goofish.com/h5/mtop.taobao.idlemessage.pc.loginuser.get/1.0/',
+                params=params,
+                data={'data': data_val},
+                headers=headers,
+            )
+            res_json = response.json()
+            updated_cookies = self._merge_response_cookies(response)
+            ret = res_json.get('ret', []) if isinstance(res_json, dict) else []
+
+            if any('SUCCESS' in item for item in ret):
+                status = "cookie_updated" if updated_cookies else "success"
+                message = "登录状态正常，Cookie已更新" if updated_cookies else "登录状态正常"
+                logger.info(message)
+                return {
+                    "status": status,
+                    "message": message,
+                    "updated_cookie_names": updated_cookies,
+                }
+
+            if is_token_expired_ret(ret):
+                if updated_cookies:
+                    logger.info(f"令牌已通过Set-Cookie刷新 {len(updated_cookies)} 个Cookie字段")
+                    return {
+                        "status": "token_refreshed",
+                        "message": "令牌已刷新",
+                        "updated_cookie_names": updated_cookies,
+                    }
+                logger.warning("令牌过期但未获取到新Cookie")
+                return {
+                    "status": "failed",
+                    "message": "令牌过期但未获取到新Cookie",
+                    "updated_cookie_names": [],
+                }
+
+            if is_session_expired_ret(ret):
+                logger.warning("Session过期，需要人工重新登录")
+                return {
+                    "status": "session_expired",
+                    "message": "Session过期，需要重新登录",
+                    "updated_cookie_names": updated_cookies,
+                }
+
+            ret_str = str(ret)
+            if "TOKEN_EMPTY" in ret_str or "令牌为空" in ret_str:
+                logger.warning("Cookie令牌为空，需要人工重新登录")
+                return {
+                    "status": "token_empty",
+                    "message": "令牌为空，需要重新登录",
+                    "updated_cookie_names": updated_cookies,
+                }
+
+            return {
+                "status": "failed",
+                "message": ret[0] if ret else "登录态续期失败",
+                "updated_cookie_names": updated_cookies,
+            }
+        except Exception as e:
+            logger.warning(f"登录态续期请求异常: {e}")
+            return {
+                "status": "failed",
+                "message": f"请求异常: {e}",
+                "updated_cookie_names": [],
+            }
         
     def hasLogin(self, retry_count=0):
         """调用hasLogin.do接口进行登录状态检查"""

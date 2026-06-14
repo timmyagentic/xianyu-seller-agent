@@ -73,3 +73,8 @@ def is_token_expired_ret(ret: list) -> bool:
         or "FAIL_SYS_TOKEN_EXPIRED" in ret_str
         or "令牌过期" in ret_str
     )
+
+
+def is_session_expired_ret(ret: list) -> bool:
+    ret_str = str(ret)
+    return "FAIL_SYS_SESSION_EXPIRED" in ret_str or "Session过期" in ret_str

@@ -53,6 +53,13 @@ class XianyuLive:
         self.current_token = None
         self.token_refresh_task = None
         self.connection_restart_flag = False  # 连接重启标志
+
+        # Cookie续期配置，参考 xianyu-auto-reply 的登录态定时续期策略
+        self.cookie_refresh_enabled = os.getenv("COOKIE_REFRESH_ENABLED", "true").lower() == "true"
+        self.cookie_refresh_interval = max(60, int(os.getenv("COOKIE_REFRESH_INTERVAL", "600")))
+        self.cookie_refresh_retry_interval = max(30, int(os.getenv("COOKIE_REFRESH_RETRY_INTERVAL", "300")))
+        self.last_cookie_refresh_time = 0
+        self.cookie_refresh_task = None
         
         # 人工接管相关配置
         self.manual_mode_conversations = set()  # 存储处于人工接管模式的会话ID
@@ -81,6 +88,14 @@ class XianyuLive:
         # 模拟人工输入配置
         self.simulate_human_typing = os.getenv("SIMULATE_HUMAN_TYPING", "False").lower() == "true"
 
+    def sync_runtime_cookies(self):
+        """Sync the latest API-session cookies into WebSocket runtime headers."""
+        cookie_string = self.xianyu.get_cookie_string()
+        if cookie_string:
+            self.cookies_str = cookie_string
+            self.cookies = trans_cookies(cookie_string)
+        return cookie_string
+
     async def refresh_token(self):
         """刷新token"""
         try:
@@ -92,6 +107,7 @@ class XianyuLive:
                 new_token = token_result['data']['accessToken']
                 self.current_token = new_token
                 self.last_token_refresh_time = time.time()
+                self.sync_runtime_cookies()
                 logger.info("Token刷新成功")
                 return new_token
             else:
@@ -101,6 +117,52 @@ class XianyuLive:
         except Exception as e:
             logger.error(f"Token刷新异常: {str(e)}")
             return None
+
+    async def refresh_cookies(self):
+        """Refresh login cookies through the mtop login-user API."""
+        try:
+            logger.info("开始执行登录态Cookie续期...")
+            result = self.xianyu.renew_login_cookies()
+            if inspect.isawaitable(result):
+                result = await result
+
+            status = result.get("status", "failed")
+            message = result.get("message", "")
+            if status in {"success", "cookie_updated", "token_refreshed"}:
+                self.sync_runtime_cookies()
+                self.last_cookie_refresh_time = time.time()
+                logger.info(f"登录态Cookie续期完成: {status}, {message}")
+                return True
+
+            if status in {"session_expired", "token_empty"}:
+                logger.warning(f"登录态Cookie续期需要人工处理: {message}")
+            else:
+                logger.warning(f"登录态Cookie续期失败: {message}")
+            return False
+        except Exception as e:
+            logger.warning(f"登录态Cookie续期异常: {e}")
+            return False
+
+    async def cookie_refresh_loop(self):
+        """Periodically renew cookies before the mtop token naturally expires."""
+        if not self.cookie_refresh_enabled:
+            logger.info("登录态Cookie续期已关闭")
+            return
+
+        while True:
+            try:
+                current_time = time.time()
+                if current_time - self.last_cookie_refresh_time >= self.cookie_refresh_interval:
+                    success = await self.refresh_cookies()
+                    if not success:
+                        await asyncio.sleep(self.cookie_refresh_retry_interval)
+                        continue
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning(f"登录态Cookie续期循环异常: {e}")
+                await asyncio.sleep(self.cookie_refresh_retry_interval)
 
     async def token_refresh_loop(self):
         """Token刷新循环"""
@@ -711,6 +773,9 @@ class XianyuLive:
                     
                     # 启动token刷新任务
                     self.token_refresh_task = asyncio.create_task(self.token_refresh_loop())
+
+                    if self.cookie_refresh_enabled:
+                        self.cookie_refresh_task = asyncio.create_task(self.cookie_refresh_loop())
                     
                     async for message in websocket:
                         try:
@@ -767,6 +832,13 @@ class XianyuLive:
                     self.token_refresh_task.cancel()
                     try:
                         await self.token_refresh_task
+                    except asyncio.CancelledError:
+                        pass
+
+                if self.cookie_refresh_task:
+                    self.cookie_refresh_task.cancel()
+                    try:
+                        await self.cookie_refresh_task
                     except asyncio.CancelledError:
                         pass
                 

@@ -16,6 +16,7 @@
 | 进程入口、WebSocket、ACK、心跳、token 刷新 | `XianyuAutoAgent/main.py` | 已作为第一阶段主骨架迁入；全局 `bot` 依赖已改为 `XianyuLive` 构造注入 |
 | 消息解密和基础过滤 | `XianyuAutoAgent/main.py` | 保留 base64/加密双路径、过期消息过滤和系统消息过滤 |
 | 商品信息 API | `XianyuAutoAgent/XianyuApis.py` | 保留 token、登录状态检查、商品详情获取；后续扩展订单接口 |
+| Cookie 续期和 Set-Cookie 合并 | `xianyu-auto-reply/common/utils/cookie_refresh.py`、`scheduler/app/services/scheduler/login_renew_task.py`、`websocket/app/services/xianyu/cookie_token_manager.py` | 已迁入轻量版 `loginuser.get` 主动续期、Set-Cookie 合并和运行时 Cookie 同步；不迁入密码登录、滑块自动化和数据库调度 |
 | LLM 自动回复和意图路由 | `XianyuAutoAgent/XianyuAgent.py` | 保留 `price`、`tech`、`default`、`no_reply` 路由和安全过滤 |
 | SQLite 上下文 | `XianyuAutoAgent/context_manager.py` | 保留 `messages`、`chat_bargain_counts`、`items`，新增迁移表 |
 | 扫码登录 | `XianyuAutoAgent/xianyu_qr_login.py` | 直接迁入并保持 `python main.py --qr-login` |

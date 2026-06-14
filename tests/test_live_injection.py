@@ -37,6 +37,38 @@ def test_xianyu_live_marks_incoming_message_as_read():
     assert websocket.sent[1]["body"] == [["msg-1"]]
 
 
+class FakeXianyuApi:
+    def __init__(self):
+        self.calls = 0
+
+    def renew_login_cookies(self):
+        self.calls += 1
+        return {
+            "status": "token_refreshed",
+            "message": "令牌已刷新",
+            "updated_cookie_names": ["_m_h5_tk"],
+        }
+
+    def get_cookie_string(self):
+        return "unb=seller-1; _m_h5_tk=newtoken_456"
+
+
+def test_xianyu_live_refresh_cookies_updates_runtime_cookie_string():
+    live = XianyuLive.__new__(XianyuLive)
+    live.xianyu = FakeXianyuApi()
+    live.cookies_str = "unb=seller-1; _m_h5_tk=oldtoken_123"
+    live.cookies = {"unb": "seller-1", "_m_h5_tk": "oldtoken_123"}
+    live.last_cookie_refresh_time = 0
+
+    result = asyncio.run(live.refresh_cookies())
+
+    assert result is True
+    assert live.xianyu.calls == 1
+    assert live.cookies_str == "unb=seller-1; _m_h5_tk=newtoken_456"
+    assert live.cookies["_m_h5_tk"] == "newtoken_456"
+    assert live.last_cookie_refresh_time > 0
+
+
 class FakeDeliverySender:
     def __init__(self):
         self.calls = []
