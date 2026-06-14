@@ -35,6 +35,32 @@ class FakeStockRelistApi:
         return self.result
 
 
+class FakeStatusRelistApi:
+    def __init__(self, status_item, relist_result):
+        self.status_item = status_item
+        self.relist_result = relist_result
+        self.status_calls = []
+        self.relist_calls = []
+
+    async def get_item_status(self, item_id):
+        self.status_calls.append(item_id)
+        return {"success": True, "item": self.status_item}
+
+    async def relist_item(self, item_id, *, stock=None):
+        self.relist_calls.append({"item_id": item_id, "stock": stock})
+        return self.relist_result
+
+
+class FakeRelistExecutor:
+    def __init__(self, result):
+        self.result = result
+        self.calls = []
+
+    async def relist(self, request):
+        self.calls.append(request)
+        return self.result
+
+
 def _service(tmp_path, item, api_result=None, allow_playwright=False):
     db_path = str(tmp_path / "listing.db")
     return RelistService(
@@ -140,6 +166,84 @@ def test_relist_request_passes_target_stock_to_api_and_records_job(tmp_path):
     assert api.calls == [{"item_id": "item-1", "stock": 7}]
     job = service.listing_store.list_jobs()[0]
     assert job.target_stock == 7
+
+
+def test_relist_refreshes_live_item_status_before_using_local_snapshot(tmp_path):
+    db_path = str(tmp_path / "listing.db")
+    listing_store = ListingStore(db_path=db_path)
+    listing_store.save_item_snapshot({"item_id": "item-1", "title": "资料包", "status": "active"})
+    api = FakeStatusRelistApi(
+        status_item={"item_id": "item-1", "title": "资料包", "status": "inactive"},
+        relist_result=RelistApiResult(success=True, final_status="active", response_summary="success"),
+    )
+    service = RelistService(
+        listing_store=listing_store,
+        delivery_store=DeliveryStore(db_path=db_path),
+        api_client=api,
+    )
+
+    result = asyncio.run(service.relist(load_relist_request({"item_id": "item-1", "stock": 7})))
+
+    assert result.status == "relisted"
+    assert api.status_calls == ["item-1"]
+    assert api.relist_calls == [{"item_id": "item-1", "stock": 7}]
+    assert listing_store.get_item_snapshot("item-1").status == "active"
+    job = listing_store.list_jobs()[0]
+    assert job.previous_status == "inactive"
+
+
+def test_relist_uses_authorized_playwright_executor_when_api_is_unavailable(tmp_path):
+    item = ItemSnapshot(item_id="item-1", title="资料包", status="inactive")
+    api = FakeRelistApi(RelistApiResult(success=False, failed_reason="relist_api_not_configured"))
+    executor = FakeRelistExecutor(
+        RelistApiResult(
+            success=True,
+            final_status="active",
+            item_url="https://www.goofish.com/item?id=item-1",
+            response_summary="playwright relist success",
+        )
+    )
+    db_path = str(tmp_path / "listing.db")
+    service = RelistService(
+        listing_store=ListingStore(db_path=db_path),
+        delivery_store=DeliveryStore(db_path=db_path),
+        item_provider=FakeItemProvider(item),
+        api_client=api,
+        allow_playwright=True,
+        relist_executor=executor,
+    )
+
+    result = asyncio.run(service.relist(load_relist_request({"item_id": "item-1", "stock": 7})))
+
+    assert result.status == "relisted"
+    assert result.final_status == "active"
+    assert executor.calls[0].item_id == "item-1"
+    assert executor.calls[0].target_stock == 7
+    assert service.listing_store.list_jobs()[0].result_status == "relisted"
+
+
+def test_relist_records_playwright_risk_control_without_success(tmp_path):
+    item = ItemSnapshot(item_id="item-1", title="资料包", status="inactive")
+    executor = FakeRelistExecutor(
+        RelistApiResult(
+            success=False,
+            failed_reason="risk_control",
+            response_summary="检测到滑块验证，停止自动重新上架",
+        )
+    )
+    service = RelistService(
+        listing_store=ListingStore(db_path=str(tmp_path / "listing.db")),
+        delivery_store=DeliveryStore(db_path=str(tmp_path / "listing.db")),
+        item_provider=FakeItemProvider(item),
+        allow_playwright=True,
+        relist_executor=executor,
+    )
+
+    result = asyncio.run(service.relist(load_relist_request({"item_id": "item-1"})))
+
+    assert result.status == "playwright_required"
+    assert result.failed_reason == "risk_control"
+    assert "滑块" in result.response_summary
 
 
 def test_relist_api_failure_returns_manual_required_reason(tmp_path):

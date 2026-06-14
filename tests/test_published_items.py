@@ -65,6 +65,56 @@ def test_get_published_items_page_posts_signed_item_list_request():
     assert calls[0]["params"]["sign"] == generate_sign(calls[0]["params"]["t"], "token", calls[0]["data"]["data"])
 
 
+def test_get_item_status_returns_active_when_item_is_in_published_list():
+    api = XianyuApis()
+    api.session.cookies.update({"_m_h5_tk": "token_123", "unb": "seller-1"})
+
+    def fake_post(url, params, data, headers=None):
+        return FakeResponse(
+            {
+                "ret": ["SUCCESS::调用成功"],
+                "data": {"cardList": [_card("item-1", "已发布商品")]},
+            }
+        )
+
+    api.session.post = fake_post
+
+    result = api.get_item_status("item-1", page_size=10, max_pages=1)
+
+    assert result["success"] is True
+    assert result["item"]["item_id"] == "item-1"
+    assert result["item"]["status"] == "active"
+    assert result["item"]["status_source"] == "published_list"
+
+
+def test_relist_item_posts_signed_configured_mtop_request(monkeypatch):
+    api = XianyuApis()
+    api.session.cookies.update({"_m_h5_tk": "token_123", "unb": "seller-1"})
+    calls = []
+
+    monkeypatch.setenv("XIANXY_RELIST_API", "mtop.alibaba.idle.seller.pc.item.republish")
+
+    def fake_post(url, params, data, headers=None):
+        calls.append({"url": url, "params": dict(params), "data": dict(data), "headers": dict(headers or {})})
+        return FakeResponse(
+            {
+                "ret": ["SUCCESS::调用成功"],
+                "data": {"code": "success", "itemUrl": "https://www.goofish.com/item?id=item-1"},
+            }
+        )
+
+    api.session.post = fake_post
+
+    result = api.relist_item("item-1", stock=7)
+
+    assert result["ret"] == ["SUCCESS::调用成功"]
+    assert calls[0]["url"].endswith("/mtop.alibaba.idle.seller.pc.item.republish/1.0/")
+    assert calls[0]["params"]["api"] == "mtop.alibaba.idle.seller.pc.item.republish"
+    payload = json.loads(calls[0]["data"]["data"])
+    assert payload == {"itemId": "item-1", "stock": 7}
+    assert calls[0]["params"]["sign"] == generate_sign(calls[0]["params"]["t"], "token", calls[0]["data"]["data"])
+
+
 def test_sync_published_items_fetches_all_pages_and_saves_snapshots(tmp_path):
     store = ListingStore(db_path=str(tmp_path / "listing.db"))
 

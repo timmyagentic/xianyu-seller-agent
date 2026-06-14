@@ -618,6 +618,177 @@ class XianyuApis:
             "page_size": int(page_size),
         }
 
+    def get_item_status(self, item_id, *, page_size=20, max_pages=None, myid=None):
+        """Refresh one item's current platform status from the seller account.
+
+        The published-item list is the safest first source because it proves the
+        item is currently visible in the seller's in-sale group. If the item is
+        absent from that list, fall back to the item detail endpoint so stale
+        local snapshots cannot keep reporting `active`.
+        """
+        item_id = str(item_id).strip()
+        if not item_id:
+            return {"success": False, "message": "item_id is required"}
+
+        published_result = self.get_all_published_items(
+            page_size=page_size,
+            max_pages=max_pages,
+            myid=myid,
+        )
+        if not published_result.get("success"):
+            return published_result
+
+        for item in published_result.get("items") or []:
+            candidate_id = str(item.get("item_id") or item.get("itemId") or item.get("id") or "")
+            if candidate_id == item_id:
+                live_item = dict(item)
+                live_item["item_id"] = item_id
+                live_item["itemId"] = item_id
+                live_item["status"] = "active"
+                live_item["status_source"] = "published_list"
+                return {
+                    "success": True,
+                    "item": live_item,
+                    "message": "商品在当前账号在售列表中",
+                }
+
+        detail_result = self.get_item_info(item_id)
+        if isinstance(detail_result, dict) and detail_result.get("data"):
+            item_detail = self._extract_item_detail(detail_result)
+            if item_detail:
+                live_item = self._normalize_detail_item_status(item_id, item_detail)
+                return {
+                    "success": True,
+                    "item": live_item,
+                    "message": "商品不在在售列表中，已使用详情接口刷新状态",
+                }
+
+        return {
+            "success": True,
+            "item": {
+                "item_id": item_id,
+                "itemId": item_id,
+                "id": item_id,
+                "status": "inactive",
+                "status_source": "published_list_absent",
+            },
+            "message": "商品不在当前账号在售列表中",
+        }
+
+    def relist_item(self, item_id, *, stock=None, retry_count=0):
+        """Call a configured seller mtop relist API without hardcoding a guessed endpoint."""
+        relist_api = os.getenv("XIANYU_RELIST_API") or os.getenv("XIANXY_RELIST_API")
+        if not relist_api:
+            return {
+                "ret": ["FAIL::relist_api_not_configured"],
+                "data": {"msg": "relist API is not configured"},
+            }
+        if retry_count >= 2:
+            return {
+                "ret": ["FAIL::relist_api_retry_exhausted"],
+                "data": {"msg": "relist API retry exhausted"},
+            }
+
+        item_id = str(item_id).strip()
+        payload: dict[str, object] = {"itemId": item_id}
+        if stock is not None:
+            payload["stock"] = int(stock)
+        data_val = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+        timestamp = str(int(time.time() * 1000))
+        token = self._cookie_value("_m_h5_tk").split("_")[0]
+        params = {
+            "jsv": "2.7.2",
+            "appKey": "34839810",
+            "t": timestamp,
+            "sign": generate_sign(timestamp, token, data_val),
+            "v": "1.0",
+            "type": "originaljson",
+            "accountSite": "xianyu",
+            "dataType": "json",
+            "timeout": "20000",
+            "needLoginPC": "true",
+            "showErrorToast": "true",
+            "api": relist_api,
+            "sessionOption": "AutoLoginOnly",
+            "spm_cnt": "a21107h.42829799.0.0",
+        }
+        headers = {
+            "accept": "application/json",
+            "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "cache-control": "no-cache",
+            "content-type": "application/x-www-form-urlencoded",
+            "idle_site_biz_code": "COMMONPRO",
+            "idle_user_group_member_id": "",
+            "origin": "https://seller.goofish.com",
+            "pragma": "no-cache",
+            "referer": "https://seller.goofish.com/?site=COMMONPRO",
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-site",
+            "user-agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/146.0.0.0 Safari/537.36"
+            ),
+            "cookie": self.get_cookie_string().replace("\n", "").replace("\r", ""),
+        }
+        try:
+            response = self.session.post(
+                f"https://h5api.m.goofish.com/h5/{relist_api}/1.0/",
+                params=params,
+                data={"data": data_val},
+                headers=headers,
+            )
+            res_json = response.json()
+            updated_cookies = self._merge_response_cookies(response)
+            ret = res_json.get("ret", []) if isinstance(res_json, dict) else []
+            if is_token_expired_ret(ret) and retry_count < 1:
+                if updated_cookies:
+                    logger.debug(f"重新上架API检测到Set-Cookie，已更新 {len(updated_cookies)} 个cookie字段")
+                time.sleep(0.5)
+                return self.relist_item(item_id, stock=stock, retry_count=retry_count + 1)
+            return res_json
+        except Exception as e:
+            logger.warning(f"重新上架API请求异常: {e}")
+            return {
+                "ret": ["FAIL::relist_api_exception"],
+                "data": {"msg": str(e)},
+            }
+
+    def _extract_item_detail(self, detail_result: dict) -> dict:
+        data = detail_result.get("data", {}) if isinstance(detail_result, dict) else {}
+        if not isinstance(data, dict):
+            return {}
+        for key in ("itemDO", "item", "itemInfo", "auctionDO"):
+            value = data.get(key)
+            if isinstance(value, dict):
+                return value
+        return data if any(key in data for key in ("title", "itemStatus", "status", "quantity")) else {}
+
+    def _normalize_detail_item_status(self, item_id: str, item_detail: dict) -> dict:
+        status_value = item_detail.get(
+            "status",
+            item_detail.get("item_status", item_detail.get("itemStatus", item_detail.get("auctionStatus", ""))),
+        )
+        status_text = self._map_platform_status(status_value)
+        live_item = dict(item_detail)
+        live_item["item_id"] = item_id
+        live_item.setdefault("itemId", item_id)
+        live_item.setdefault("id", item_id)
+        live_item["status"] = status_text
+        live_item["status_source"] = "item_detail"
+        return live_item
+
+    def _map_platform_status(self, value) -> str:
+        if value is None or value == "":
+            return "inactive"
+        text = str(value).strip().lower()
+        if text in {"0", "active", "online", "on_sale", "selling", "在售", "已上架"}:
+            return "active"
+        if text in {"1", "2", "inactive", "offline", "off_sale", "sold_out", "下架", "已下架", "已售出"}:
+            return "inactive"
+        return text
+
     def get_order_detail(self, order_id, retry_count=0):
         """获取订单详情，供自动发货补全购买数量和规格信息。"""
         if retry_count >= 3:
