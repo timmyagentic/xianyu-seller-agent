@@ -1,5 +1,5 @@
 import re
-from typing import List, Dict
+from typing import Any, List, Dict
 import os
 from openai import OpenAI
 from loguru import logger
@@ -7,6 +7,11 @@ from loguru import logger
 
 DEFAULT_MODEL_BASE_URL = "https://api-inference.modelscope.cn/v1"
 DEFAULT_MODEL_NAME = "deepseek-ai/DeepSeek-V4-Pro"
+FALLBACK_REPLY = "这个我确认一下，稍后回复你"
+
+
+class LLMResponseError(RuntimeError):
+    """Raised when an OpenAI-compatible response cannot produce reply text."""
 
 
 class XianyuReplyBot:
@@ -112,12 +117,16 @@ class XianyuReplyBot:
         logger.info(f'议价次数: {bargain_count}')
 
         # 4. 生成回复
-        return agent.generate(
-            user_msg=user_msg,
-            item_desc=item_desc,
-            context=formatted_context,
-            bargain_count=bargain_count
-        )
+        try:
+            return agent.generate(
+                user_msg=user_msg,
+                item_desc=item_desc,
+                context=formatted_context,
+                bargain_count=bargain_count
+            )
+        except LLMResponseError as e:
+            logger.warning(f"回复生成失败，使用兜底回复: {e}")
+            return FALLBACK_REPLY
     
     def _extract_bargain_count(self, context: List[Dict]) -> int:
         """
@@ -195,11 +204,15 @@ class IntentRouter:
         
         # 4. 大模型兜底
         # logger.debug("使用大模型进行意图分类")
-        return self.classify_agent.generate(
-            user_msg=user_msg,
-            item_desc=item_desc,
-            context=context
-        )
+        try:
+            return self.classify_agent.generate(
+                user_msg=user_msg,
+                item_desc=item_desc,
+                context=context
+            )
+        except LLMResponseError as e:
+            logger.warning(f"意图分类失败，回退默认意图: {e}")
+            return "default"
 
 
 class BaseAgent:
@@ -232,7 +245,69 @@ class BaseAgent:
             max_tokens=500,
             top_p=0.8
         )
-        return response.choices[0].message.content
+        return self._extract_response_text(response)
+
+    def _create_completion(self, messages: List[Dict], temperature: float = 0.4, **kwargs) -> str:
+        request = {
+            "model": os.getenv("MODEL_NAME", DEFAULT_MODEL_NAME),
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": 500,
+            "top_p": 0.8,
+        }
+        request.update(kwargs)
+        response = self.client.chat.completions.create(**request)
+        return self._extract_response_text(response)
+
+    def _extract_response_text(self, response: Any) -> str:
+        choices = getattr(response, "choices", None)
+        if not choices:
+            response_keys = self._truthy_model_keys(response)
+            logger.warning(f"LLM响应缺少choices: response字段={response_keys}")
+            raise LLMResponseError("LLM response missing choices")
+
+        choice = choices[0]
+        message = getattr(choice, "message", None)
+        text = self._normalize_text(getattr(message, "content", None))
+        if text:
+            return text
+
+        message_keys = self._truthy_model_keys(message)
+        logger.warning(
+            f"LLM返回空内容: finish_reason={getattr(choice, 'finish_reason', None)}, message字段={message_keys}"
+        )
+        raise LLMResponseError("LLM response content empty")
+
+    def _truthy_model_keys(self, value: Any) -> List[str]:
+        if value is None:
+            return []
+        try:
+            data = value.model_dump()
+        except Exception:
+            return []
+        if not isinstance(data, dict):
+            return []
+        return [key for key, val in data.items() if val]
+
+    def _normalize_text(self, value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value.strip()
+        if isinstance(value, list):
+            parts = []
+            for item in value:
+                if isinstance(item, str):
+                    parts.append(item)
+                    continue
+                if isinstance(item, dict):
+                    text = item.get("text")
+                else:
+                    text = getattr(item, "text", None)
+                if text:
+                    parts.append(str(text))
+            return "".join(parts).strip()
+        return str(value).strip()
 
 
 class PriceAgent(BaseAgent):
@@ -244,14 +319,8 @@ class PriceAgent(BaseAgent):
         messages = self._build_messages(user_msg, item_desc, context)
         messages[0]['content'] += f"\n▲当前议价轮次：{bargain_count}"
 
-        response = self.client.chat.completions.create(
-            model=os.getenv("MODEL_NAME", DEFAULT_MODEL_NAME),
-            messages=messages,
-            temperature=dynamic_temp,
-            max_tokens=500,
-            top_p=0.8
-        )
-        return self.safety_filter(response.choices[0].message.content)
+        response = self._create_completion(messages, temperature=dynamic_temp)
+        return self.safety_filter(response)
 
     def _calc_temperature(self, bargain_count: int) -> float:
         """动态温度策略"""
@@ -277,7 +346,7 @@ class TechAgent(BaseAgent):
 
         response = self.client.chat.completions.create(**request)
 
-        return self.safety_filter(response.choices[0].message.content)
+        return self.safety_filter(self._extract_response_text(response))
 
 
     # def _fetch_tech_specs(self) -> str:

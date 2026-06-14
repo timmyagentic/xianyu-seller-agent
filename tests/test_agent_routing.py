@@ -61,6 +61,33 @@ class FakeClient:
         self.chat.completions = self.completions
 
 
+class FakeNoChoicesCompletions:
+    def __init__(self):
+        self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+
+        class FakeResponse:
+            choices = None
+
+            def model_dump(self):
+                return {"choices": None, "object": "chat.completion"}
+
+        return FakeResponse()
+
+
+class FakeNoChoicesClient:
+    def __init__(self):
+        self.completions = FakeNoChoicesCompletions()
+
+        class Chat:
+            pass
+
+        self.chat = Chat()
+        self.chat.completions = self.completions
+
+
 def test_intent_router_prioritizes_tech_before_price():
     router = IntentRouter(FakeClassifyAgent("default"))
 
@@ -169,3 +196,19 @@ def test_reply_bot_returns_marker_for_no_reply_intent():
 
     assert bot.generate_reply("谢谢", "商品信息", []) == "-"
     assert bot.last_intent == "no_reply"
+
+
+def test_reply_bot_returns_fallback_when_reply_llm_has_no_choices():
+    bot = XianyuReplyBot.__new__(XianyuReplyBot)
+    bot.router = FakeRouter("tech")
+    client = FakeNoChoicesClient()
+    bot.agents = {
+        "classify": FakeReplyAgent("unused"),
+        "price": FakeReplyAgent("price"),
+        "tech": TechAgent(client, "系统提示", lambda text: text),
+        "default": FakeReplyAgent("default"),
+    }
+    bot.last_intent = None
+
+    assert bot.generate_reply("这个可以用 GLM 5.2 吗", "商品信息", []) == "这个我确认一下，稍后回复你"
+    assert bot.last_intent == "tech"

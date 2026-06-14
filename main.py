@@ -656,9 +656,8 @@ class XianyuLive:
                                 
                         except json.JSONDecodeError:
                             logger.error("消息解析失败")
-                        except Exception as e:
-                            logger.error(f"处理消息时发生错误: {str(e)}")
-                            logger.debug(f"原始消息: {message}")
+                        except Exception:
+                            logger.exception("处理消息时发生错误")
 
             except websockets.exceptions.ConnectionClosed:
                 logger.warning("WebSocket连接已关闭")
