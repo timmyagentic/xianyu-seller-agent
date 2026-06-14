@@ -6,9 +6,13 @@ import sys
 import requests
 from loguru import logger
 from utils.xianyu_utils import generate_sign
+from services.delivery.orders import is_token_expired_ret, parse_order_detail_response
 
 
 class XianyuApis:
+    parse_order_detail_response = staticmethod(parse_order_detail_response)
+    is_token_expired_ret = staticmethod(is_token_expired_ret)
+
     def __init__(self):
         self.url = 'https://h5api.m.goofish.com/h5/mtop.taobao.idlemessage.pc.login.token/1.0/'
         self.session = requests.Session()

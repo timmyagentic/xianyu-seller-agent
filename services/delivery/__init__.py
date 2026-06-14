@@ -1,3 +1,4 @@
+from .api import ApiDeliveryClient, ApiDeliveryError, ApiResponse
 from .content import replace_delivery_params
 from .models import DeliveryConfig, DeliveryInventoryItem
 from .orders import OrderInfo
@@ -10,6 +11,9 @@ __all__ = [
     "DeliveryResult",
     "DeliveryService",
     "DeliveryStore",
+    "ApiDeliveryClient",
+    "ApiDeliveryError",
+    "ApiResponse",
     "OrderInfo",
     "replace_delivery_params",
 ]

@@ -18,7 +18,7 @@
 
 ## 当前仓库状态
 
-当前仓库已迁入 `XianyuAutoAgent` 的自动回复基线代码，并补充了本地 Python 脚手架、共享消息解析层、SQLite 发货配置 CLI 和幂等虚拟发货服务。付款消息接入、API 发货和重新上架仍在后续阶段实现。现有文档和项目文件用于约束后续实现边界：
+当前仓库已迁入 `XianyuAutoAgent` 的自动回复基线代码，并补充了本地 Python 脚手架、共享消息解析层、SQLite 发货配置 CLI、幂等虚拟发货服务、API 发货客户端和订单详情解析。真实付款消息接入和重新上架仍在后续阶段实现。现有文档和项目文件用于约束后续实现边界：
 
 - [MVP 设计](docs/superpowers/specs/2026-06-14-xianyu-seller-agent-mvp-design.md)
 - [参考实现映射](docs/reference-implementation-map.md)

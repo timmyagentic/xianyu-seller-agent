@@ -281,25 +281,25 @@ git commit -m "feat: implement idempotent virtual delivery"
 - Create: `tests/test_order_detail.py`
 - Create: `tests/test_api_delivery.py`
 
-- [ ] **Step 1: Write failing order API tests**
+- [x] **Step 1: Write failing order API tests**
 
 Cover `mtop.idle.web.trade.order.detail` request signing data shape, response parsing for quantity, amount, spec, and receiver fields, token-expired retry classification, and Set-Cookie merge behavior using fake responses.
 
-- [ ] **Step 2: Write failing API delivery tests**
+- [x] **Step 2: Write failing API delivery tests**
 
 Cover GET/POST API delivery, JSON response extraction, dynamic parameter replacement, network failure retry, and failure not consuming data inventory.
 
-- [ ] **Step 3: Run tests to verify failures**
+- [x] **Step 3: Run tests to verify failures**
 
 Run: `python -m pytest tests/test_order_detail.py tests/test_api_delivery.py -q`
 
 Expected: fail because API delivery and order detail provider are incomplete.
 
-- [ ] **Step 4: Implement APIs behind injectable HTTP clients**
+- [x] **Step 4: Implement APIs behind injectable HTTP clients**
 
 Adapt from `auto_delivery_handler.py` and `delivery_utils.py` while avoiding Redis, ORM, backend notifications, auto-confirm, and account-closing behavior.
 
-- [ ] **Step 5: Verify**
+- [x] **Step 5: Verify**
 
 Run:
 
@@ -310,7 +310,7 @@ python -m pytest tests/test_order_detail.py tests/test_api_delivery.py tests/tes
 
 Expected: pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add XianyuApis.py services/delivery tests README.md docs/reference-implementation-map.md

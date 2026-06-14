@@ -2,6 +2,7 @@ import inspect
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
+from .api import ApiDeliveryClient, ApiDeliveryError
 from .content import replace_delivery_params
 from .models import DeliveryInventoryItem
 from .orders import OrderInfo
@@ -20,10 +21,18 @@ class DeliveryResult:
 
 
 class DeliveryService:
-    def __init__(self, *, store: DeliveryStore, send_message: SendMessage, enabled: bool = False):
+    def __init__(
+        self,
+        *,
+        store: DeliveryStore,
+        send_message: SendMessage,
+        enabled: bool = False,
+        api_client: ApiDeliveryClient | None = None,
+    ):
         self.store = store
         self.send_message = send_message
         self.enabled = enabled
+        self.api_client = api_client or ApiDeliveryClient()
 
     async def deliver_order(self, order: OrderInfo) -> DeliveryResult:
         if not self.enabled:
@@ -51,8 +60,21 @@ class DeliveryService:
                     message="库存不足",
                 )
             content = "\n".join(row.content for row in reserved_rows)
-        else:
-            return DeliveryResult(status="unsupported_type", order_id=order.order_id)
+        elif config.delivery_type == "api":
+            try:
+                content = await self.api_client.fetch_content(config.api_config or config.content, order.as_params())
+            except ApiDeliveryError as exc:
+                self.store.record_delivery_log(
+                    order_no=order.order_id,
+                    chat_id=order.chat_id,
+                    item_id=order.item_id,
+                    buyer_id=order.buyer_id,
+                    config_id=config.id,
+                    content="",
+                    status="failed_retryable",
+                    failed_reason=str(exc),
+                )
+                return DeliveryResult(status="failed_retryable", order_id=order.order_id, message=str(exc))
 
         try:
             await self._send(order, content)
