@@ -1057,6 +1057,7 @@ def build_cli_parser():
     relist_parser.add_argument("--delivery-name", default="")
     relist_parser.add_argument("--stock", type=int, dest="target_stock")
     relist_parser.add_argument("--allow-playwright", action="store_true")
+    relist_parser.add_argument("--confirm-real-relist", action="store_true")
 
     preflight_parser = listing_subparsers.add_parser("relist-preflight", help="只读预检授权浏览器是否能定位重新上架入口")
     preflight_parser.add_argument("--item-id", required=True)
@@ -1181,9 +1182,10 @@ def run_cli(argv=None):
                 request = load_relist_request(payload)
 
             api_client = _build_xianyu_api_from_env()
+            confirm_real_relist = bool(getattr(args, "confirm_real_relist", False))
             relist_executor = _build_playwright_relist_executor(
                 cookies_str=os.getenv("COOKIES_STR", ""),
-                allow_playwright=args.allow_playwright,
+                allow_playwright=args.allow_playwright and confirm_real_relist,
             )
             service = RelistService(
                 listing_store=listing_store,

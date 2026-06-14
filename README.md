@@ -105,6 +105,7 @@ python main.py listing item-status --item-id 123
 python main.py listing relist-preflight --item-id 123 --expected-title "商品标题" --stock 7
 python main.py listing relist --item-id 123
 python main.py listing relist --item-id 123 --stock 7
+python main.py listing relist --item-id 123 --stock 7 --allow-playwright --confirm-real-relist
 python main.py listing auto-relist set --item-id 123 --stock 7
 python main.py listing auto-relist list --item-id 123
 python main.py listing relist relist/item-001.json
@@ -117,7 +118,7 @@ python main.py listing status
 
 `listing relist-preflight` 会在不点击、不填库存、不写 `listing_jobs` 的前提下打开授权浏览器做页面预检：先刷新单商品真实状态，再检查商品管理页是否能看到目标商品和“重新上架/恢复上架/上架”入口。它用于真实执行前收集页面证据；遇到登录、滑块、验证码、风控、找不到商品或找不到按钮时只返回结构化失败。
 
-`listing relist` 会在 `COOKIES_STR` 存在时先通过当前账号刷新商品真实状态：优先查询在售列表，未命中时再用商品详情接口兜底，避免本地旧快照把下架/售出商品误判为 `already_active`。如果配置了 `XIANYU_RELIST_API`，会按 `xianyu-auto-reply` 的 seller mtop 操作模式签名调用该接口；未配置或 API 失败时，默认记录 `manual_required`，只有显式传入 `--allow-playwright` 才会打开授权浏览器执行器。
+`listing relist` 会在 `COOKIES_STR` 存在时先通过当前账号刷新商品真实状态：优先查询在售列表，未命中时再用商品详情接口兜底，避免本地旧快照把下架/售出商品误判为 `already_active`。如果配置了 `XIANYU_RELIST_API`，会按 `xianyu-auto-reply` 的 seller mtop 操作模式签名调用该接口；未配置或 API 失败时，默认记录 `manual_required`。只传 `--allow-playwright` 时不会点击页面，只会在任务中记录需要授权浏览器执行；只有同时传入 `--allow-playwright --confirm-real-relist`，CLI 才会创建真实 Playwright 执行器。
 
 授权 Playwright 执行器只处理“商品管理页已有目标商品并出现重新上架入口”的场景：它会设置目标库存、点击“重新上架/恢复上架/上架”，并且只有页面出现“操作成功/上架成功/已上架/在售”等确认文本后才记录 `relisted`。如果检测到登录页、滑块、验证码、风控提示、找不到目标商品、找不到按钮或点击后没有确认结果，会记录 `playwright_required` 和失败原因，必要时保存截图到 `AUTO_RELIST_SCREENSHOT_DIR`，不会伪造成功。`--stock` 会作为目标库存写入任务，并传递给 mtop API 或授权浏览器执行器。
 

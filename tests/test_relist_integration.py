@@ -67,6 +67,59 @@ def test_listing_relist_cli_injects_api_client_when_cookies_exist(tmp_path, monk
     assert isinstance(FakeRelistService.instances[0].kwargs["api_client"], FakeApi)
 
 
+def test_listing_relist_allow_playwright_does_not_create_executor_without_real_confirm(tmp_path, monkeypatch, capsys):
+    FakeRelistService.instances = []
+    FakePlaywrightExecutor.instances = []
+    monkeypatch.setenv("COOKIES_STR", "unb=seller-1; _m_h5_tk=token_123")
+    monkeypatch.setattr(main, "XianyuApis", FakeApi)
+    monkeypatch.setattr(main, "RelistService", FakeRelistService)
+    monkeypatch.setattr(main, "PlaywrightRelistExecutor", FakePlaywrightExecutor)
+
+    exit_code = run_cli(
+        [
+            "listing",
+            "--db-path",
+            str(tmp_path / "listing.db"),
+            "relist",
+            "--item-id",
+            "item-1",
+            "--allow-playwright",
+        ]
+    )
+
+    assert exit_code == 0
+    assert FakeRelistService.instances[0].kwargs["allow_playwright"] is True
+    assert FakeRelistService.instances[0].kwargs["relist_executor"] is None
+    assert FakePlaywrightExecutor.instances == []
+
+
+def test_listing_relist_confirm_real_relist_creates_authorized_executor(tmp_path, monkeypatch, capsys):
+    FakeRelistService.instances = []
+    FakePlaywrightExecutor.instances = []
+    monkeypatch.setenv("COOKIES_STR", "unb=seller-1; _m_h5_tk=token_123")
+    monkeypatch.setattr(main, "XianyuApis", FakeApi)
+    monkeypatch.setattr(main, "RelistService", FakeRelistService)
+    monkeypatch.setattr(main, "PlaywrightRelistExecutor", FakePlaywrightExecutor)
+
+    exit_code = run_cli(
+        [
+            "listing",
+            "--db-path",
+            str(tmp_path / "listing.db"),
+            "relist",
+            "--item-id",
+            "item-1",
+            "--allow-playwright",
+            "--confirm-real-relist",
+        ]
+    )
+
+    assert exit_code == 0
+    assert FakeRelistService.instances[0].kwargs["allow_playwright"] is True
+    assert isinstance(FakeRelistService.instances[0].kwargs["relist_executor"], FakePlaywrightExecutor)
+    assert FakePlaywrightExecutor.instances[0].kwargs["cookies_str"]
+
+
 def test_listing_relist_preflight_uses_live_status_and_preview_executor(tmp_path, monkeypatch, capsys):
     FakePlaywrightExecutor.instances = []
 
