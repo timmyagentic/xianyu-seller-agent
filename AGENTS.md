@@ -2,21 +2,22 @@
 
 ## 项目结构与模块组织
 
-本仓库当前是文档先行项目，根目录包含 `README.md`，设计文档在 `docs/superpowers/specs/`，参考实现映射在 `docs/reference-implementation-map.md`。后续代码应先迁入 `XianyuAutoAgent` 的根级 Python 结构：`main.py`、`XianyuApis.py`、`XianyuAgent.py`、`context_manager.py`、`xianyu_qr_login.py` 和 `prompts/`。新增能力放入 `services/messages/`、`services/delivery/`、`services/listing/`。运行时数据放 `data/`，重新上架任务配置放 `relist/`，这些本地数据默认不提交。
+本仓库是单进程 Python 项目，根级自动回复结构来自 `XianyuAutoAgent`：`main.py`、`XianyuApis.py`、`XianyuAgent.py`、`context_manager.py`、`xianyu_qr_login.py`、`utils/` 和 `prompts/`。新增能力放入 `services/messages/`、`services/delivery/`、`services/listing/`。设计文档在 `docs/superpowers/specs/`，实施计划在 `docs/superpowers/plans/`，参考实现映射在 `docs/reference-implementation-map.md`。运行时数据放 `data/`，重新上架任务配置放 `relist/`，这些本地数据默认不提交。
 
 ## 构建、测试与开发命令
 
-当前仓库尚无可运行代码。代码迁入后使用：
+本地开发使用：
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+python -m pytest -q
 python main.py --qr-login
 python main.py
 ```
 
-`python main.py --qr-login` 用于刷新 Cookie，`python main.py` 启动自动回复。后续 CLI 应兼容 `python main.py delivery add ...`、`python main.py listing relist --item-id 123` 和 `python main.py listing relist relist/item-001.json`。
+`python main.py --qr-login` 用于刷新 Cookie，`python main.py` 启动自动回复。CLI 兼容 `python main.py delivery add ...`、`python main.py delivery list ...`、`python main.py listing relist --item-id 123`、`python main.py listing relist relist/item-001.json` 和 `python main.py listing status`。无真实 Cookie 时只运行测试和帮助命令，不启动真实平台动作。
 
 ## 编码风格与命名
 

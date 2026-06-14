@@ -379,11 +379,11 @@ git commit -m "feat: add existing item relisting"
 - Modify: `docs/reference-implementation-map.md`
 - Create or modify: focused docs under `docs/` if implementation details require them
 
-- [ ] **Step 1: Update docs**
+- [x] **Step 1: Update docs**
 
 Document install, `.env.example`, QR login, auto-reply run command, delivery CLI, listing CLI, feature flags, fake-test boundary, and manual acceptance requirements.
 
-- [ ] **Step 2: Run full local verification**
+- [x] **Step 2: Run full local verification**
 
 Run:
 
@@ -398,13 +398,13 @@ git status -sb
 
 Expected: compile succeeds, tests pass, help commands do not require credentials, and git status is clean after final commit.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add README.md AGENTS.md docs tests
 git commit -m "docs: document mvp operation and verification"
 ```
 
-- [ ] **Step 4: Update draft PR**
+- [x] **Step 4: Update draft PR**
 
 Push all commits and update the PR body with changed files, reference sources, validation output, secrets/cookie risk statement, and remaining manual acceptance steps.

@@ -63,7 +63,7 @@ xianyu-seller-agent/
 
 ## 预期开发命令
 
-代码迁入后使用标准 Python 本地运行方式：
+使用标准 Python 本地运行方式：
 
 ```bash
 python -m venv .venv
@@ -77,17 +77,62 @@ python main.py
 
 在尚未创建虚拟环境时，也可以用 `uv run --with pytest python -m pytest -q` 临时运行测试；真实运行仍应使用 `.venv` 和 `requirements.txt`。
 
-后续 CLI 应保持 `python main.py` 等价于启动自动回复，同时扩展：
+`python main.py` 等价于启动自动回复；帮助和本地配置命令不会要求 Cookie：
+
+```bash
+python main.py --help
+python main.py delivery --help
+python main.py listing --help
+```
+
+自动发货配置 CLI：
 
 ```bash
 python main.py delivery add --item-id 123 --type text --content "..."
 python main.py delivery list --item-id 123
+```
+
+重新上架任务 CLI：
+
+```bash
 python main.py listing relist --item-id 123
 python main.py listing relist relist/item-001.json
 python main.py listing status
 ```
 
 `listing relist` 默认不会执行真实平台点击；它先检查本地商品快照，已上架时幂等记录 `already_active` 并刷新发货绑定，未上架且没有授权 API/浏览器执行器时记录 `manual_required` 或 `playwright_required`。
+
+## 配置与默认关闭项
+
+复制 `.env.example` 为 `.env` 后再填入真实配置。`.env`、Cookie、SQLite 运行库、买家信息、发货库存和真实重新上架任务都不应提交。
+
+关键开关：
+
+- `AUTO_REPLY_ENABLED=true`：自动回复入口保留为默认可用。
+- `AUTO_DELIVERY_ENABLED=false`：自动发货默认关闭。
+- `AUTO_CONFIRM_DELIVERY_ENABLED=false`：自动确认发货默认关闭。
+- `AUTO_RELIST_ENABLED=false`：真实重新上架默认关闭。
+
+遇到 Cookie 失效、滑块、风控、账号归属不清或真实交易风险时，程序应记录原因并交给人工处理，不实现绕过逻辑。
+
+## 测试与人工验收
+
+默认验证只使用单元测试、fake/mocks 和 CLI 帮助命令，不需要真实闲鱼账号：
+
+```bash
+python -m py_compile main.py XianyuApis.py XianyuAgent.py context_manager.py xianyu_qr_login.py utils/xianyu_utils.py services/messages/*.py services/delivery/*.py services/listing/*.py
+python -m pytest -q
+python main.py --help
+python main.py delivery --help
+python main.py listing --help
+```
+
+人工验收需要用户明确提供账号授权后再做：
+
+1. `python main.py --qr-login` 刷新 Cookie。
+2. `python main.py` 启动自动回复并验证一条买家咨询。
+3. 使用测试订单或用户确认的真实订单验证一次幂等发货。
+4. 对用户确认的已发布商品执行重新上架或确认 `already_active` 跳过，并检查 `listing_jobs` 记录。
 
 ## 开发原则
 
