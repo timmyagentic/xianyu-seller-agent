@@ -108,6 +108,8 @@ python main.py listing status
 
 关键开关：
 
+- `MODEL_BASE_URL=https://api-inference.modelscope.cn/v1` 与 `MODEL_NAME=deepseek-ai/DeepSeek-V4-Pro`：默认使用 ModelScope 的 OpenAI 兼容接口；真实 `API_KEY` 只写入本地 `.env`。
+- `LLM_ENABLE_SEARCH=false`：默认不发送供应商特定的联网搜索扩展参数。
 - `AUTO_REPLY_ENABLED=true`：自动回复入口保留为默认可用。
 - `AUTO_DELIVERY_ENABLED=false`：自动发货默认关闭。
 - `AUTO_CONFIRM_DELIVERY_ENABLED=false`：自动确认发货默认关闭。

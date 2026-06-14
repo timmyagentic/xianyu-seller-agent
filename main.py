@@ -670,7 +670,7 @@ def check_and_complete_env():
     """检查并补全关键环境变量"""
     # 定义关键变量及其默认无效值（占位符）
     critical_vars = {
-        "API_KEY": "默认使用通义千问,apikey通过百炼模型平台获取",
+        "API_KEY": "默认使用 ModelScope OpenAI 兼容接口，请填写 ModelScope Token",
         "COOKIES_STR": "your_cookies_here"
     }
     

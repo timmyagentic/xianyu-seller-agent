@@ -5,12 +5,16 @@ from openai import OpenAI
 from loguru import logger
 
 
+DEFAULT_MODEL_BASE_URL = "https://api-inference.modelscope.cn/v1"
+DEFAULT_MODEL_NAME = "deepseek-ai/DeepSeek-V4-Pro"
+
+
 class XianyuReplyBot:
     def __init__(self):
         # 初始化OpenAI客户端
         self.client = OpenAI(
             api_key=os.getenv("API_KEY"),
-            base_url=os.getenv("MODEL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+            base_url=os.getenv("MODEL_BASE_URL", DEFAULT_MODEL_BASE_URL),
         )
         self._init_system_prompts()
         self._init_agents()
@@ -222,7 +226,7 @@ class BaseAgent:
     def _call_llm(self, messages: List[Dict], temperature: float = 0.4) -> str:
         """调用大模型"""
         response = self.client.chat.completions.create(
-            model=os.getenv("MODEL_NAME", "qwen-max"),
+            model=os.getenv("MODEL_NAME", DEFAULT_MODEL_NAME),
             messages=messages,
             temperature=temperature,
             max_tokens=500,
@@ -241,7 +245,7 @@ class PriceAgent(BaseAgent):
         messages[0]['content'] += f"\n▲当前议价轮次：{bargain_count}"
 
         response = self.client.chat.completions.create(
-            model=os.getenv("MODEL_NAME", "qwen-max"),
+            model=os.getenv("MODEL_NAME", DEFAULT_MODEL_NAME),
             messages=messages,
             temperature=dynamic_temp,
             max_tokens=500,
@@ -261,16 +265,17 @@ class TechAgent(BaseAgent):
         messages = self._build_messages(user_msg, item_desc, context)
         # messages[0]['content'] += "\n▲知识库：\n" + self._fetch_tech_specs()
 
-        response = self.client.chat.completions.create(
-            model=os.getenv("MODEL_NAME", "qwen-max"),
-            messages=messages,
-            temperature=0.4,
-            max_tokens=500,
-            top_p=0.8,
-            extra_body={
-                "enable_search": True,
-            }
-        )
+        request = {
+            "model": os.getenv("MODEL_NAME", DEFAULT_MODEL_NAME),
+            "messages": messages,
+            "temperature": 0.4,
+            "max_tokens": 500,
+            "top_p": 0.8,
+        }
+        if os.getenv("LLM_ENABLE_SEARCH", "").lower() in {"1", "true", "yes", "on"}:
+            request["extra_body"] = {"enable_search": True}
+
+        response = self.client.chat.completions.create(**request)
 
         return self.safety_filter(response.choices[0].message.content)
 

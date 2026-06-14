@@ -1,4 +1,4 @@
-from XianyuAgent import IntentRouter, XianyuReplyBot
+from XianyuAgent import BaseAgent, IntentRouter, PriceAgent, TechAgent, XianyuReplyBot
 
 
 class FakeClassifyAgent:
@@ -31,10 +31,81 @@ class FakeRouter:
         return self.intent
 
 
+class FakeCompletions:
+    def __init__(self):
+        self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+
+        class FakeMessage:
+            content = "模型回复"
+
+        class FakeChoice:
+            message = FakeMessage()
+
+        class FakeResponse:
+            choices = [FakeChoice()]
+
+        return FakeResponse()
+
+
+class FakeClient:
+    def __init__(self):
+        self.completions = FakeCompletions()
+
+        class Chat:
+            pass
+
+        self.chat = Chat()
+        self.chat.completions = self.completions
+
+
 def test_intent_router_prioritizes_tech_before_price():
     router = IntentRouter(FakeClassifyAgent("default"))
 
     assert router.detect("这个型号和新版比有什么参数差异，价格能少吗", "商品", "") == "tech"
+
+
+def test_base_agent_uses_modelscope_default_model(monkeypatch):
+    monkeypatch.delenv("MODEL_NAME", raising=False)
+    client = FakeClient()
+    agent = BaseAgent(client, "系统提示", lambda text: text)
+
+    assert agent.generate("你好", "商品信息", "") == "模型回复"
+    assert client.completions.calls[0]["model"] == "deepseek-ai/DeepSeek-V4-Pro"
+
+
+def test_base_agent_allows_model_name_override(monkeypatch):
+    monkeypatch.setenv("MODEL_NAME", "custom/model")
+    client = FakeClient()
+    agent = BaseAgent(client, "系统提示", lambda text: text)
+
+    agent.generate("你好", "商品信息", "")
+
+    assert client.completions.calls[0]["model"] == "custom/model"
+
+
+def test_price_agent_uses_modelscope_default_model(monkeypatch):
+    monkeypatch.delenv("MODEL_NAME", raising=False)
+    client = FakeClient()
+    agent = PriceAgent(client, "系统提示", lambda text: text)
+
+    agent.generate("便宜点", "商品信息", "", bargain_count=2)
+
+    assert client.completions.calls[0]["model"] == "deepseek-ai/DeepSeek-V4-Pro"
+
+
+def test_tech_agent_omits_search_extension_by_default(monkeypatch):
+    monkeypatch.delenv("MODEL_NAME", raising=False)
+    monkeypatch.delenv("LLM_ENABLE_SEARCH", raising=False)
+    client = FakeClient()
+    agent = TechAgent(client, "系统提示", lambda text: text)
+
+    agent.generate("参数怎么样", "商品信息", "")
+
+    assert client.completions.calls[0]["model"] == "deepseek-ai/DeepSeek-V4-Pro"
+    assert "extra_body" not in client.completions.calls[0]
 
 
 def test_intent_router_detects_price_without_llm():
