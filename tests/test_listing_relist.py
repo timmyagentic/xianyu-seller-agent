@@ -246,6 +246,25 @@ def test_relist_records_playwright_risk_control_without_success(tmp_path):
     assert "滑块" in result.response_summary
 
 
+def test_relist_records_custom_playwright_required_reason_when_executor_is_not_confirmed(tmp_path):
+    item = ItemSnapshot(item_id="item-1", title="资料包", status="inactive")
+    service = RelistService(
+        listing_store=ListingStore(db_path=str(tmp_path / "listing.db")),
+        delivery_store=DeliveryStore(db_path=str(tmp_path / "listing.db")),
+        item_provider=FakeItemProvider(item),
+        allow_playwright=True,
+        playwright_required_reason="auto_relist_confirmation_required",
+    )
+
+    result = asyncio.run(service.relist(load_relist_request({"item_id": "item-1", "stock": 7})))
+
+    assert result.status == "playwright_required"
+    assert result.failed_reason == "auto_relist_confirmation_required"
+    job = service.listing_store.list_jobs()[0]
+    assert job.result_status == "playwright_required"
+    assert job.failed_reason == "auto_relist_confirmation_required"
+
+
 def test_relist_api_failure_returns_manual_required_reason(tmp_path):
     item = ItemSnapshot(item_id="item-1", title="资料包", status="inactive")
     service = _service(

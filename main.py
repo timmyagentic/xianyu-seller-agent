@@ -665,17 +665,20 @@ class XianyuLive:
             return
 
         allow_playwright = config.allow_playwright or os.getenv("AUTO_RELIST_ALLOW_PLAYWRIGHT", "false").lower() == "true"
+        confirm_playwright = os.getenv("AUTO_RELIST_CONFIRM_PLAYWRIGHT", "false").lower() == "true"
         cookie_string = self.sync_runtime_cookies()
         relist_executor = _build_playwright_relist_executor(
             cookies_str=cookie_string,
-            allow_playwright=allow_playwright,
+            allow_playwright=allow_playwright and confirm_playwright,
         )
+        playwright_required_reason = "auto_relist_confirmation_required" if allow_playwright and not confirm_playwright else ""
         service = RelistService(
             listing_store=self.listing_store,
             delivery_store=self.delivery_store,
             api_client=self.xianyu,
             allow_playwright=allow_playwright,
             relist_executor=relist_executor,
+            playwright_required_reason=playwright_required_reason,
         )
         relist_result = await service.relist(
             {
@@ -1187,12 +1190,18 @@ def run_cli(argv=None):
                 cookies_str=os.getenv("COOKIES_STR", ""),
                 allow_playwright=args.allow_playwright and confirm_real_relist,
             )
+            playwright_required_reason = (
+                "real_relist_confirmation_required"
+                if args.allow_playwright and not confirm_real_relist
+                else ""
+            )
             service = RelistService(
                 listing_store=listing_store,
                 delivery_store=delivery_store,
                 api_client=api_client,
                 allow_playwright=args.allow_playwright,
                 relist_executor=relist_executor,
+                playwright_required_reason=playwright_required_reason,
             )
             result = asyncio.run(service.relist(request))
             print(json.dumps(result.__dict__, ensure_ascii=False, indent=2))

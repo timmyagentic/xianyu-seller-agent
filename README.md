@@ -138,11 +138,12 @@ python main.py listing status
 - `AUTO_CONFIRM_DELIVERY_ENABLED=false`：自动确认发货默认关闭。
 - `AUTO_RELIST_ENABLED=false`：发货后自动重新上架默认关闭；即使商品已配置 `listing auto-relist set`，未打开该开关也不会触发。
 - `XIANYU_RELIST_API=`：可选的真实重新上架 mtop API 名称。没有稳定接口证据时保持为空；代码只提供签名调用边界，不硬编码未知接口。
-- `AUTO_RELIST_ALLOW_PLAYWRIGHT=false`：默认不允许自动创建浏览器执行任务；开启后仍会在登录、滑块、验证码、风控或缺少页面确认时停止。
+- `AUTO_RELIST_ALLOW_PLAYWRIGHT=false`：默认不允许自动记录浏览器重新上架需求；开启后仍不会直接点击页面。
+- `AUTO_RELIST_CONFIRM_PLAYWRIGHT=false`：发货后自动重新上架的真实浏览器点击确认开关；只有同时允许 Playwright 且该开关为 `true` 时，后台 hook 才会创建真实执行器。
 - `AUTO_RELIST_SCREENSHOT_DIR=data/relist-screenshots`：授权浏览器路径保存页面证据的本地目录，默认不提交。
 - `AUTO_RELIST_PLAYWRIGHT_HEADLESS=true`：重新上架浏览器执行器是否无头运行；也兼容旧的 `PLAYWRIGHT_HEADLESS`。
 
-启用自动发货后，程序会监听“我已付款，等待你发货”“等待卖家发货”等付款完成消息，解析订单号、商品 ID、买家和会话，再按商品配置发货。同一订单已经写入 `sent` 日志后会跳过；`data` 库存会按订单购买数量先预占，发送成功后标记 `sent`，发送失败时保留为 `failed_retryable` 以便同一订单重试继续使用原 key。发货成功后，如果同时开启 `AUTO_RELIST_ENABLED=true` 且该商品存在启用的 `auto-relist` 配置，程序会创建重新上架任务并记录目标库存；失败只影响重新上架任务日志，不回滚已发货结果。
+启用自动发货后，程序会监听“我已付款，等待你发货”“等待卖家发货”等付款完成消息，解析订单号、商品 ID、买家和会话，再按商品配置发货。同一订单已经写入 `sent` 日志后会跳过；`data` 库存会按订单购买数量先预占，发送成功后标记 `sent`，发送失败时保留为 `failed_retryable` 以便同一订单重试继续使用原 key。发货成功后，如果同时开启 `AUTO_RELIST_ENABLED=true` 且该商品存在启用的 `auto-relist` 配置，程序会创建重新上架任务并记录目标库存；如果允许 Playwright 但没有设置 `AUTO_RELIST_CONFIRM_PLAYWRIGHT=true`，任务会停在需要授权浏览器执行的结构化结果，不会点击页面；失败只影响重新上架任务日志，不回滚已发货结果。
 
 遇到 Cookie 失效、滑块、风控、账号归属不清或真实交易风险时，程序应记录原因并交给人工处理，不实现绕过逻辑。
 

@@ -28,6 +28,7 @@ class RelistService:
         api_client=None,
         allow_playwright: bool = False,
         relist_executor=None,
+        playwright_required_reason: str = "",
     ):
         self.listing_store = listing_store
         self.delivery_store = delivery_store
@@ -35,6 +36,7 @@ class RelistService:
         self.api_client = api_client
         self.allow_playwright = allow_playwright
         self.relist_executor = relist_executor
+        self.playwright_required_reason = playwright_required_reason
 
     async def relist(self, request: RelistRequest | dict[str, Any] | str) -> RelistResult:
         request = load_relist_request(request)
@@ -107,8 +109,10 @@ class RelistService:
                 return self._record_playwright_required(
                     request=request,
                     previous_status=item.status,
-                    failed_reason=api_result.failed_reason
-                    or "relist API unavailable; authorized Playwright/manual run required",
+                    failed_reason=self._playwright_required_reason(
+                        api_result.failed_reason
+                        or "relist API unavailable; authorized Playwright/manual run required"
+                    ),
                 )
 
             return self._record_result(
@@ -152,7 +156,9 @@ class RelistService:
                 status="playwright_required",
                 previous_status=item.status,
                 response_summary=json.dumps(command.__dict__, ensure_ascii=False),
-                failed_reason="relist API unavailable; authorized Playwright/manual run required",
+                failed_reason=self._playwright_required_reason(
+                    "relist API unavailable; authorized Playwright/manual run required"
+                ),
             )
 
         return self._record_result(
@@ -218,6 +224,9 @@ class RelistService:
             response_summary=str(result),
             failed_reason="playwright_relist_failed",
         )
+
+    def _playwright_required_reason(self, fallback: str) -> str:
+        return self.playwright_required_reason or fallback
 
     def _save_relisted_snapshot(
         self,

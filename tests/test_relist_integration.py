@@ -90,6 +90,7 @@ def test_listing_relist_allow_playwright_does_not_create_executor_without_real_c
     assert exit_code == 0
     assert FakeRelistService.instances[0].kwargs["allow_playwright"] is True
     assert FakeRelistService.instances[0].kwargs["relist_executor"] is None
+    assert FakeRelistService.instances[0].kwargs["playwright_required_reason"] == "real_relist_confirmation_required"
     assert FakePlaywrightExecutor.instances == []
 
 
@@ -170,11 +171,13 @@ def test_listing_relist_preflight_uses_live_status_and_preview_executor(tmp_path
     assert FakePlaywrightExecutor.instances[0].kwargs["cookies_str"]
 
 
-def test_post_delivery_relist_uses_live_api_and_authorized_executor(tmp_path, monkeypatch):
+def test_post_delivery_relist_allow_playwright_does_not_create_executor_without_confirm(tmp_path, monkeypatch):
     FakeRelistService.instances = []
+    FakePlaywrightExecutor.instances = []
     monkeypatch.setenv("DB_PATH", str(tmp_path / "listing.db"))
     monkeypatch.setenv("AUTO_RELIST_ENABLED", "true")
     monkeypatch.setenv("AUTO_RELIST_ALLOW_PLAYWRIGHT", "true")
+    monkeypatch.delenv("AUTO_RELIST_CONFIRM_PLAYWRIGHT", raising=False)
     monkeypatch.setattr(main, "RelistService", FakeRelistService)
     monkeypatch.setattr(main, "PlaywrightRelistExecutor", FakePlaywrightExecutor, raising=False)
 
@@ -196,6 +199,42 @@ def test_post_delivery_relist_uses_live_api_and_authorized_executor(tmp_path, mo
 
     service = FakeRelistService.instances[0]
     assert service.kwargs["api_client"] is live.xianyu
+    assert service.kwargs["allow_playwright"] is True
+    assert service.kwargs["relist_executor"] is None
+    assert service.kwargs["playwright_required_reason"] == "auto_relist_confirmation_required"
+    assert FakePlaywrightExecutor.instances == []
+    assert service.requests[0]["target_stock"] == 7
+
+
+def test_post_delivery_relist_confirm_playwright_creates_authorized_executor(tmp_path, monkeypatch):
+    FakeRelistService.instances = []
+    FakePlaywrightExecutor.instances = []
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "listing.db"))
+    monkeypatch.setenv("AUTO_RELIST_ENABLED", "true")
+    monkeypatch.setenv("AUTO_RELIST_ALLOW_PLAYWRIGHT", "true")
+    monkeypatch.setenv("AUTO_RELIST_CONFIRM_PLAYWRIGHT", "true")
+    monkeypatch.setattr(main, "RelistService", FakeRelistService)
+    monkeypatch.setattr(main, "PlaywrightRelistExecutor", FakePlaywrightExecutor, raising=False)
+
+    live = XianyuLive("unb=seller-1; _m_h5_tk=token_123", reply_bot=object())
+    ListingStore(db_path=str(tmp_path / "listing.db")).upsert_auto_relist_config(
+        item_id="item-1",
+        target_stock=7,
+        expected_title="资料包",
+        enabled=True,
+        allow_playwright=True,
+    )
+
+    asyncio.run(
+        live.handle_post_delivery_relist(
+            OrderInfo(order_id="order-1", item_id="item-1", buyer_id="buyer-1", chat_id="chat-1"),
+            object(),
+        )
+    )
+
+    service = FakeRelistService.instances[0]
+    assert service.kwargs["api_client"] is live.xianyu
+    assert service.kwargs["allow_playwright"] is True
     assert isinstance(service.kwargs["relist_executor"], FakePlaywrightExecutor)
     assert service.kwargs["relist_executor"].kwargs["cookies_str"]
     assert service.requests[0]["target_stock"] == 7
