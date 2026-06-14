@@ -30,7 +30,7 @@
 - Create: `tests/test_project_safety.py`
 - Modify: `README.md`
 
-- [ ] **Step 1: Write failing safety tests**
+- [x] **Step 1: Write failing safety tests**
 
 ```python
 from pathlib import Path
@@ -48,23 +48,23 @@ def test_expected_project_files_are_declared():
     assert Path("pytest.ini").exists()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_project_safety.py -q`
 
 Expected: fail because `tests/test_project_safety.py`, `.gitignore`, `.env.example`, `requirements.txt`, or `pytest.ini` do not exist yet.
 
-- [ ] **Step 3: Add minimal project files**
+- [x] **Step 3: Add minimal project files**
 
 Create `.gitignore` with runtime and secret exclusions. Create `.env.example` with non-secret defaults for `API_KEY`, `MODEL_BASE_URL`, `COOKIES_STR`, and feature flags set to disabled. Create `requirements.txt` from the XianyuAutoAgent dependency baseline plus `pytest` and optional libraries required by planned services. Create `pytest.ini` with `testpaths = tests`.
 
-- [ ] **Step 4: Run safety tests**
+- [x] **Step 4: Run safety tests**
 
 Run: `python -m pytest tests/test_project_safety.py -q`
 
 Expected: pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add .gitignore .env.example requirements.txt pytest.ini tests/test_project_safety.py README.md

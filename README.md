@@ -18,11 +18,12 @@
 
 ## 当前仓库状态
 
-当前仓库仍处于文档和设计整理阶段，尚未迁入可运行代码。现有文档用于约束后续实现边界：
+当前仓库处于文档和本地 Python 脚手架阶段，尚未迁入可运行业务代码。现有文档和项目文件用于约束后续实现边界：
 
 - [MVP 设计](docs/superpowers/specs/2026-06-14-xianyu-seller-agent-mvp-design.md)
 - [参考实现映射](docs/reference-implementation-map.md)
 - [贡献指南](AGENTS.md)
+- [实施计划](docs/superpowers/plans/2026-06-14-xianyu-seller-agent-mvp.md)
 
 ## 参考项目职责
 
@@ -68,10 +69,13 @@ xianyu-seller-agent/
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+python -m pytest -q
 cp .env.example .env
 python main.py --qr-login
 python main.py
 ```
+
+在尚未创建虚拟环境时，也可以用 `uv run --with pytest python -m pytest -q` 临时运行测试；真实运行仍应使用 `.venv` 和 `requirements.txt`。
 
 后续 CLI 应保持 `python main.py` 等价于启动自动回复，同时扩展：
 
