@@ -1,6 +1,7 @@
 import base64
 import json
 import asyncio
+import inspect
 import time
 import os
 import argparse
@@ -15,6 +16,8 @@ import random
 from utils.xianyu_utils import generate_mid, generate_uuid, trans_cookies, generate_device_id, decrypt
 from XianyuAgent import XianyuReplyBot
 from context_manager import ChatContextManager
+from services.delivery.orders import OrderDetail, OrderInfo
+from services.delivery.service import DeliveryService
 from services.delivery.store import DeliveryStore
 from services.listing.relist import RelistService, load_relist_request
 from services.listing.store import ListingStore
@@ -63,6 +66,13 @@ class XianyuLive:
             message_expire_time_ms=self.message_expire_time,
         )
         self.message_deduplicator = MessageDeduplicator()
+        self.delivery_store = DeliveryStore(db_path=os.getenv("DB_PATH", "data/chat_history.db"))
+        self.delivery_service = DeliveryService(
+            store=self.delivery_store,
+            send_message=self.send_delivery_message,
+            enabled=os.getenv("AUTO_DELIVERY_ENABLED", "false").lower() == "true",
+        )
+        self.order_detail_provider = self.fetch_order_detail_for_delivery
         
         # 人工接管关键词，从环境变量读取
         self.toggle_keywords = os.getenv("TOGGLE_KEYWORDS", "。")
@@ -167,6 +177,28 @@ class XianyuLive:
             ]
         }
         await ws.send(json.dumps(msg))
+        return True
+
+    async def send_delivery_message(self, *, chat_id, buyer_id, content):
+        """Send an auto-delivery message through the active WebSocket."""
+        if not self.ws:
+            raise RuntimeError("WebSocket is not connected")
+        await self.send_msg(self.ws, chat_id, buyer_id, content)
+        return True
+
+    async def fetch_order_detail_for_delivery(self, order_id: str) -> OrderDetail:
+        """Fetch order detail when the API method is available; otherwise use safe defaults."""
+        get_order_detail = getattr(self.xianyu, "get_order_detail", None)
+        if not get_order_detail:
+            return OrderDetail()
+        response = get_order_detail(order_id)
+        if inspect.isawaitable(response):
+            response = await response
+        if isinstance(response, OrderDetail):
+            return response
+        if isinstance(response, dict):
+            return self.xianyu.parse_order_detail_response(response)
+        return OrderDetail()
 
     async def init(self, ws):
         # 如果没有token或者token过期，获取新token
@@ -404,6 +436,10 @@ class XianyuLive:
             logger.debug(f"原始消息: {message_data}")
 
     async def handle_incoming_message(self, incoming, websocket):
+        if incoming.kind == "paid_order":
+            await self.handle_paid_order_message(incoming, websocket)
+            return
+
         if incoming.kind != "chat":
             logger.debug(f"非聊天消息，暂不触发自动回复: {incoming.kind}")
             return
@@ -511,6 +547,58 @@ class XianyuLive:
 
         await self.send_msg(websocket, chat_id, send_user_id, bot_reply)
         await self.mark_message_read(websocket, chat_id, incoming.message_id)
+
+    async def handle_paid_order_message(self, incoming, websocket):
+        if not incoming.order_id:
+            logger.warning("付款消息缺少订单号，跳过自动发货")
+            return None
+        if not incoming.item_id:
+            logger.warning(f"订单 {incoming.order_id} 缺少商品ID，跳过自动发货")
+            return None
+        if not incoming.chat_id or not incoming.sender_id:
+            logger.warning(f"订单 {incoming.order_id} 缺少会话或买家ID，跳过自动发货")
+            return None
+
+        detail = await self._load_order_detail_for_delivery(incoming.order_id)
+        order = OrderInfo(
+            order_id=incoming.order_id,
+            item_id=incoming.item_id,
+            buyer_id=incoming.sender_id,
+            chat_id=incoming.chat_id,
+            buyer_name=self._delivery_buyer_name(incoming.sender_name),
+            item_title="",
+            quantity=max(int(detail.quantity or 1), 1),
+            spec_name=detail.spec_name,
+            spec_value=detail.spec_value,
+        )
+        result = await self.delivery_service.deliver_order(order)
+        logger.info(
+            "自动发货处理结果: 订单={}, 商品={}, 会话={}, 状态={}",
+            order.order_id,
+            order.item_id,
+            order.chat_id,
+            result.status,
+        )
+        if result.status in {"sent", "already_sent"}:
+            await self.mark_message_read(websocket, incoming.chat_id, incoming.message_id)
+        return result
+
+    async def _load_order_detail_for_delivery(self, order_id: str) -> OrderDetail:
+        provider = getattr(self, "order_detail_provider", None)
+        if not provider:
+            return OrderDetail()
+        detail = provider(order_id)
+        if inspect.isawaitable(detail):
+            detail = await detail
+        if isinstance(detail, OrderDetail):
+            return detail
+        if isinstance(detail, dict):
+            return self.xianyu.parse_order_detail_response(detail)
+        return OrderDetail()
+
+    def _delivery_buyer_name(self, sender_name: str) -> str:
+        system_names = {"", "系统通知", "闲鱼系统", "买家已付款", "等待你发货"}
+        return "" if sender_name in system_names else sender_name
 
     async def mark_message_read(self, websocket, chat_id: str, message_id: str | None):
         """Clear the conversation red point and mark the incoming message as read."""

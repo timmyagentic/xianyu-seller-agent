@@ -118,4 +118,6 @@ class DeliveryService:
             content=content,
         )
         if inspect.isawaitable(result):
-            await result
+            result = await result
+        if result is False:
+            raise RuntimeError("send_message returned False")

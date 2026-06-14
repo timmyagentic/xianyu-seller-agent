@@ -137,3 +137,18 @@ def test_delivery_service_respects_disabled_flag(tmp_path):
 
     assert result.status == "disabled"
     assert sender.calls == []
+
+
+def test_delivery_service_treats_false_sender_result_as_retryable_failure(tmp_path):
+    store = DeliveryStore(db_path=str(tmp_path / "delivery.db"))
+    store.add_config(item_id="item-1", name="文本", delivery_type="text", content="content")
+
+    async def false_sender(*, chat_id, buyer_id, content):
+        return False
+
+    service = DeliveryService(store=store, send_message=false_sender, enabled=True)
+
+    result = asyncio.run(service.deliver_order(_order()))
+
+    assert result.status == "failed_retryable"
+    assert store.has_sent_order("order-1") is False
