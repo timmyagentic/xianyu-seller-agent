@@ -101,6 +101,7 @@ python main.py delivery inventory list --config-id 2
 
 ```bash
 python main.py listing fetch-items
+python main.py listing item-status --item-id 123
 python main.py listing relist --item-id 123
 python main.py listing relist --item-id 123 --stock 7
 python main.py listing auto-relist set --item-id 123 --stock 7
@@ -110,6 +111,8 @@ python main.py listing status
 ```
 
 `listing fetch-items` 会参考 `xianyu-auto-reply` 的商品同步策略，调用闲鱼 `mtop.idle.web.xyh.item.list` 在售分组接口，分页获取当前账号所有已发布商品并写入本地 `items` 快照表。
+
+`listing item-status` 会只读刷新单个商品的真实平台状态，并把脱敏后的状态摘要输出到终端，同时更新本地 `items` 快照。它会区分 `active`、`inactive`、`sold`、`relistable` 等状态，并保留平台原始状态码、状态文案、状态来源和 `can_relist` 判断，便于在执行重新上架前确认当前商品是不是旧快照误判。
 
 `listing relist` 会在 `COOKIES_STR` 存在时先通过当前账号刷新商品真实状态：优先查询在售列表，未命中时再用商品详情接口兜底，避免本地旧快照把下架/售出商品误判为 `already_active`。如果配置了 `XIANYU_RELIST_API`，会按 `xianyu-auto-reply` 的 seller mtop 操作模式签名调用该接口；未配置或 API 失败时，默认记录 `manual_required`，只有显式传入 `--allow-playwright` 才会打开授权浏览器执行器。
 

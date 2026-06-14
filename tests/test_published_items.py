@@ -87,6 +87,43 @@ def test_get_item_status_returns_active_when_item_is_in_published_list():
     assert result["item"]["status_source"] == "published_list"
 
 
+def test_get_item_status_distinguishes_sold_detail_status():
+    api = XianyuApis()
+    api.session.cookies.update({"_m_h5_tk": "token_123", "unb": "seller-1"})
+    calls = []
+
+    def fake_post(url, params, data, headers=None):
+        calls.append({"api": params["api"]})
+        if params["api"] == "mtop.idle.web.xyh.item.list":
+            return FakeResponse({"ret": ["SUCCESS::调用成功"], "data": {"cardList": []}})
+        return FakeResponse(
+            {
+                "ret": ["SUCCESS::调用成功"],
+                "data": {
+                    "itemDO": {
+                        "itemId": "item-1",
+                        "title": "已售商品",
+                        "itemStatus": 1,
+                        "itemStatusStr": "卖掉了",
+                        "quantity": 1,
+                    }
+                },
+            }
+        )
+
+    api.session.post = fake_post
+
+    result = api.get_item_status("item-1", page_size=10, max_pages=1)
+
+    assert result["success"] is True
+    assert result["item"]["item_id"] == "item-1"
+    assert result["item"]["status"] == "sold"
+    assert result["item"]["platform_status"] == 1
+    assert result["item"]["platform_status_text"] == "卖掉了"
+    assert result["item"]["can_relist"] is True
+    assert calls == [{"api": "mtop.idle.web.xyh.item.list"}, {"api": "mtop.taobao.idle.pc.detail"}]
+
+
 def test_relist_item_posts_signed_configured_mtop_request(monkeypatch):
     api = XianyuApis()
     api.session.cookies.update({"_m_h5_tk": "token_123", "unb": "seller-1"})
@@ -177,3 +214,45 @@ def test_listing_fetch_items_cli_syncs_current_account_items(tmp_path, monkeypat
     assert payload["success"] is True
     assert payload["saved_count"] == 1
     assert ListingStore(db_path=db_path).get_item_snapshot("item-cli").title == "CLI商品"
+
+
+def test_listing_item_status_cli_refreshes_single_item_without_raw_payload(tmp_path, monkeypatch, capsys):
+    db_path = str(tmp_path / "listing.db")
+
+    class FakeSession:
+        def __init__(self):
+            self.cookies = {}
+
+    class FakeApi:
+        def __init__(self):
+            self.session = FakeSession()
+
+        def get_item_status(self, item_id, *, page_size=20, max_pages=None, myid=None):
+            return {
+                "success": True,
+                "item": {
+                    "item_id": item_id,
+                    "title": "已售商品",
+                    "status": "sold",
+                    "status_source": "item_detail",
+                    "platform_status": 1,
+                    "platform_status_text": "卖掉了",
+                    "can_relist": True,
+                    "raw_sensitive": "should_not_be_printed",
+                },
+            }
+
+    monkeypatch.setenv("COOKIES_STR", "unb=seller-1; _m_h5_tk=token_123")
+    monkeypatch.setattr("main.XianyuApis", FakeApi)
+
+    exit_code = run_cli(["listing", "--db-path", db_path, "item-status", "--item-id", "item-1"])
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 0
+    assert payload["success"] is True
+    assert payload["item"]["status"] == "sold"
+    assert payload["item"]["platform_status_text"] == "卖掉了"
+    assert payload["item"]["can_relist"] is True
+    assert "raw_sensitive" not in captured.out
+    assert ListingStore(db_path=db_path).get_item_snapshot("item-1").status == "sold"

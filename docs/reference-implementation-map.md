@@ -47,7 +47,7 @@
 
 | 能力 | 参考文件 | 迁移说明 |
 | --- | --- | --- |
-| 商品同步和归属校验 | `xianyu-auto-reply/common/services/item_service.py`、`common/utils/item_info_manager.py`、`backend-web/app/api/routes/items.py` | 已参考 `fetch_all_items_from_account`、`get_item_list_info` 和 `/items/get-all-from-account` 思路；MVP 通过 `listing fetch-items` 调用 `mtop.idle.web.xyh.item.list` 同步在售商品到本地 SQLite `items` 快照表，并在 `listing relist` 前用 `XianyuApis.get_item_status` 重新查询当前账号状态，未命中在售列表时使用商品详情接口兜底，不迁入 SQLAlchemy/Redis |
+| 商品同步和归属校验 | `xianyu-auto-reply/common/services/item_service.py`、`common/utils/item_info_manager.py`、`backend-web/app/api/routes/items.py` | 已参考 `fetch_all_items_from_account`、`get_item_list_info` 和 `/items/get-all-from-account` 思路；MVP 通过 `listing fetch-items` 调用 `mtop.idle.web.xyh.item.list` 同步在售商品到本地 SQLite `items` 快照表，并通过 `listing item-status` / `listing relist` 前置 `XianyuApis.get_item_status` 重新查询当前账号状态，未命中在售列表时使用商品详情接口兜底，区分 `active`、`inactive`、`sold`、`relistable` 等状态，不迁入 SQLAlchemy/Redis |
 | 商品操作 API 调用模式 | `xianyu-auto-reply/promotion/backend/app/services/item_delete_api_service.py` | 已参考 mtop seller API 的签名、Cookie、`needLoginPC`、Set-Cookie 合并和 token 过期重试模式，落地为 `XIANYU_RELIST_API` 可配置调用边界；未硬编码未知重新上架接口，也不复用删除动作本身 |
 | Playwright 兜底浏览器控制 | `xianyu-auto-reply/common/services/promotion_xianyu_publisher.py`、`backend-web/app/services/xianyu_publisher.py` | 已落地 Cookie 域、商品管理 URL、库存输入选择器、登录/滑块/验证码/风控检测和授权浏览器重新上架执行器；默认不启动浏览器，不走空白发布表单、图片上传和新建商品流程，只有页面确认成功后才记录 `relisted` |
 | 商品管理数量/状态判断 | `promotion/backend/app/services/publish_rule_scheduler.py`、`common/services/item_service.py` | 已基于商品快照状态、标题和 `item_id` 回查做 `already_active`、标题不匹配和归属失败判断 |

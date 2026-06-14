@@ -982,6 +982,37 @@ def _build_playwright_relist_executor(*, cookies_str: str, allow_playwright: boo
     )
 
 
+def _public_item_status_payload(item: dict) -> dict:
+    keys = (
+        "item_id",
+        "itemId",
+        "id",
+        "title",
+        "status",
+        "status_source",
+        "platform_status",
+        "platform_status_text",
+        "can_relist",
+        "detail_url",
+        "detailUrl",
+        "item_url",
+        "itemUrl",
+    )
+    payload = {key: item[key] for key in keys if key in item}
+    item_id = payload.get("item_id") or payload.get("itemId") or payload.get("id")
+    if item_id:
+        payload["item_id"] = str(item_id)
+        payload.pop("itemId", None)
+        payload.pop("id", None)
+    item_url = payload.get("item_url") or payload.get("itemUrl") or payload.get("detail_url") or payload.get("detailUrl")
+    if item_url:
+        payload["item_url"] = str(item_url)
+    payload.pop("itemUrl", None)
+    payload.pop("detailUrl", None)
+    payload.pop("detail_url", None)
+    return payload
+
+
 def build_cli_parser():
     parser = argparse.ArgumentParser(prog="python main.py")
     subparsers = parser.add_subparsers(dest="command")
@@ -1047,6 +1078,12 @@ def build_cli_parser():
     fetch_items_parser.add_argument("--page-size", type=int, default=20)
     fetch_items_parser.add_argument("--max-pages", type=int)
     fetch_items_parser.add_argument("--myid")
+
+    item_status_parser = listing_subparsers.add_parser("item-status", help="刷新并查看单个商品的真实平台状态")
+    item_status_parser.add_argument("--item-id", required=True)
+    item_status_parser.add_argument("--page-size", type=int, default=20)
+    item_status_parser.add_argument("--max-pages", type=int)
+    item_status_parser.add_argument("--myid")
 
     return parser
 
@@ -1195,6 +1232,33 @@ def run_cli(argv=None):
             payload = [job.__dict__ for job in jobs]
             print(json.dumps(payload, ensure_ascii=False, indent=2))
             return 0
+
+        if args.listing_command == "item-status":
+            if args.page_size < 1 or args.page_size > 100:
+                parser.error("listing item-status --page-size must be between 1 and 100")
+            if args.max_pages is not None and args.max_pages < 1:
+                parser.error("listing item-status --max-pages must be greater than 0")
+
+            api = _build_xianyu_api_from_env()
+            if not api:
+                print(json.dumps({"success": False, "message": "COOKIES_STR is required"}, ensure_ascii=False))
+                return 1
+
+            result = api.get_item_status(
+                args.item_id,
+                page_size=args.page_size,
+                max_pages=args.max_pages,
+                myid=args.myid,
+            )
+            if result.get("success") and isinstance(result.get("item"), dict):
+                listing_store.save_item_snapshot(result["item"])
+                result = {
+                    **result,
+                    "item": _public_item_status_payload(result["item"]),
+                    "snapshot_saved": True,
+                }
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0 if result.get("success") else 1
 
         if args.listing_command == "fetch-items":
             if args.page_size < 1 or args.page_size > 100:

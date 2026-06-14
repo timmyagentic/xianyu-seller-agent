@@ -646,6 +646,9 @@ class XianyuApis:
                 live_item["itemId"] = item_id
                 live_item["status"] = "active"
                 live_item["status_source"] = "published_list"
+                live_item["platform_status"] = item.get("item_status", item.get("itemStatus", item.get("status", 0)))
+                live_item["platform_status_text"] = item.get("item_status_text", item.get("itemStatusStr", "在售"))
+                live_item["can_relist"] = False
                 return {
                     "success": True,
                     "item": live_item,
@@ -671,6 +674,9 @@ class XianyuApis:
                 "id": item_id,
                 "status": "inactive",
                 "status_source": "published_list_absent",
+                "platform_status": "",
+                "platform_status_text": "not_in_published_list",
+                "can_relist": True,
             },
             "message": "商品不在当前账号在售列表中",
         }
@@ -770,22 +776,42 @@ class XianyuApis:
             "status",
             item_detail.get("item_status", item_detail.get("itemStatus", item_detail.get("auctionStatus", ""))),
         )
-        status_text = self._map_platform_status(status_value)
+        status_label = item_detail.get(
+            "status_text",
+            item_detail.get("statusText", item_detail.get("itemStatusStr", item_detail.get("statusDesc", ""))),
+        )
+        status_text = self._map_platform_status(status_value, status_label)
         live_item = dict(item_detail)
         live_item["item_id"] = item_id
         live_item.setdefault("itemId", item_id)
         live_item.setdefault("id", item_id)
         live_item["status"] = status_text
         live_item["status_source"] = "item_detail"
+        live_item["platform_status"] = status_value
+        live_item["platform_status_text"] = status_label
+        live_item["can_relist"] = status_text in {"inactive", "sold", "relistable"}
         return live_item
 
-    def _map_platform_status(self, value) -> str:
+    def _map_platform_status(self, value, label: object = "") -> str:
+        label_text = str(label or "").strip().lower()
+        if any(word in label_text for word in ("卖掉", "已卖", "已售", "sold")):
+            return "sold"
+        if any(word in label_text for word in ("可重新上架", "重新上架", "可上架", "待上架", "relist")):
+            return "relistable"
+        if any(word in label_text for word in ("下架", "off_sale", "offline")):
+            return "inactive"
+        if any(word in label_text for word in ("在售", "已上架", "on_sale", "selling", "active")):
+            return "active"
         if value is None or value == "":
             return "inactive"
         text = str(value).strip().lower()
         if text in {"0", "active", "online", "on_sale", "selling", "在售", "已上架"}:
             return "active"
-        if text in {"1", "2", "inactive", "offline", "off_sale", "sold_out", "下架", "已下架", "已售出"}:
+        if text in {"sold", "sold_out", "已售出", "卖掉了"}:
+            return "sold"
+        if text in {"relistable", "可重新上架", "重新上架"}:
+            return "relistable"
+        if text in {"1", "2", "inactive", "offline", "off_sale", "down", "下架", "已下架"}:
             return "inactive"
         return text
 

@@ -326,9 +326,15 @@ def normalize_item_status(value: object) -> str:
         return "unknown"
     text = str(value).strip().lower()
     active_values = {"0", "active", "online", "on_sale", "selling", "在售", "已上架"}
-    inactive_values = {"1", "inactive", "offline", "off_sale", "sold_out", "下架", "已下架"}
+    inactive_values = {"1", "inactive", "offline", "off_sale", "down", "下架", "已下架"}
+    sold_values = {"sold", "sold_out", "已售出", "卖掉了"}
+    relistable_values = {"relistable", "可重新上架", "重新上架"}
     if text in active_values:
         return "active"
+    if text in sold_values:
+        return "sold"
+    if text in relistable_values:
+        return "relistable"
     if text in inactive_values:
         return "inactive"
     return text
