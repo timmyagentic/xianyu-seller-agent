@@ -117,6 +117,77 @@ def test_parser_parses_card_update_message():
     assert incoming.text == "我已付款，等待你发货"
 
 
+def test_parser_marks_paid_order_card_update_and_extracts_order_id():
+    parser = MessageParser(myid="seller-1")
+    message = {
+        "1": "card-ref",
+        "2": "chat-1@goofish",
+        "5": int(time.time() * 1000),
+        "4": {
+            "senderUserId": "buyer-1",
+            "senderNick": "等待你发货",
+            "reminderTitle": "等待你发货",
+            "reminderContent": "我已付款，等待你发货",
+            "reminderUrl": "https://www.goofish.com/item?itemId=item-2",
+            "bizTag": json.dumps(
+                {
+                    "messageId": "msg-paid",
+                    "bizOrderId": "1234567890123",
+                    "itemId": "item-2",
+                }
+            ),
+        },
+    }
+
+    incoming = parser.parse_single_message(message)
+
+    assert incoming.kind == "paid_order"
+    assert incoming.chat_id == "chat-1"
+    assert incoming.item_id == "item-2"
+    assert incoming.order_id == "1234567890123"
+    assert incoming.is_paid_order is True
+
+
+def test_parser_marks_red_reminder_waiting_seller_ship_as_paid_order():
+    parser = MessageParser(myid="seller-1")
+    message = {
+        "1": "buyer-1@goofish",
+        "2": "chat-1@goofish",
+        "3": {
+            "redReminder": "等待卖家发货",
+            "bizOrderId": "1234567890124",
+            "itemId": "item-3",
+        },
+        "5": int(time.time() * 1000),
+    }
+
+    incoming = parser.parse_single_message(message)
+
+    assert incoming.kind == "paid_order"
+    assert incoming.chat_id == "chat-1"
+    assert incoming.sender_id == "buyer-1"
+    assert incoming.item_id == "item-3"
+    assert incoming.text == "等待卖家发货"
+    assert incoming.order_id == "1234567890124"
+    assert incoming.is_paid_order is True
+
+
+def test_parser_does_not_treat_waiting_buyer_payment_as_paid_order():
+    parser = MessageParser(myid="seller-1")
+    message = {
+        "1": "buyer-1@goofish",
+        "2": "chat-1@goofish",
+        "3": {
+            "redReminder": "等待买家付款",
+            "bizOrderId": "1234567890125",
+            "itemId": "item-3",
+        },
+        "5": int(time.time() * 1000),
+    }
+
+    assert parser.parse_single_message(message) is None
+
+
 def test_deduplicator_tracks_processed_message_ids():
     dedup = MessageDeduplicator(max_size=2)
 

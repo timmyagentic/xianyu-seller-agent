@@ -14,3 +14,5 @@ class IncomingMessage:
     raw: dict[str, Any]
     is_from_self: bool
     kind: str
+    order_id: str = ""
+    is_paid_order: bool = False
