@@ -89,29 +89,29 @@ git commit -m "chore: scaffold python mvp project"
 - Create: `tests/test_agent_routing.py`
 - Create: `tests/test_qr_login.py`
 
-- [ ] **Step 1: Write failing tests for context storage**
+- [x] **Step 1: Write failing tests for context storage**
 
 Cover `ChatContextManager` creating `messages`, `chat_bargain_counts`, and `items`; saving and reading item JSON; adding chat messages; and incrementing bargain counts.
 
-- [ ] **Step 2: Write failing tests for intent routing and safety filtering**
+- [x] **Step 2: Write failing tests for intent routing and safety filtering**
 
 Cover price, tech, default, and no-reply routing without calling a real LLM by injecting fake agents or monkeypatching the classify call.
 
-- [ ] **Step 3: Write failing tests for QR login display helpers**
+- [x] **Step 3: Write failing tests for QR login display helpers**
 
 Cover QR display lines and error classes using test-only fake QR data.
 
-- [ ] **Step 4: Run tests to verify failures**
+- [x] **Step 4: Run tests to verify failures**
 
 Run: `python -m pytest tests/test_context_manager.py tests/test_agent_routing.py tests/test_qr_login.py -q`
 
 Expected: fail because migrated modules do not exist.
 
-- [ ] **Step 5: Migrate and adapt XianyuAutoAgent baseline**
+- [x] **Step 5: Migrate and adapt XianyuAutoAgent baseline**
 
 Copy behavior from `/Volumes/SamsungDisk/Code/XianyuAutoAgent` into this repository. Keep `python main.py --qr-login` and `python main.py`. Replace the global `bot` dependency by injecting `XianyuReplyBot` into `XianyuLive`. Keep real platform calls behind normal runtime paths; tests must not require credentials.
 
-- [ ] **Step 6: Verify compile and tests**
+- [x] **Step 6: Verify compile and tests**
 
 Run:
 
@@ -122,7 +122,7 @@ python -m pytest tests/test_context_manager.py tests/test_agent_routing.py tests
 
 Expected: compile succeeds and tests pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add main.py XianyuApis.py XianyuAgent.py context_manager.py xianyu_qr_login.py utils prompts tests README.md docs/reference-implementation-map.md

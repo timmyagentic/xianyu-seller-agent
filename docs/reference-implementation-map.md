@@ -13,7 +13,7 @@
 
 | 能力 | 参考文件 | 迁移说明 |
 | --- | --- | --- |
-| 进程入口、WebSocket、ACK、心跳、token 刷新 | `XianyuAutoAgent/main.py` | 作为第一阶段主骨架；修正全局 `bot` 依赖，改为注入 |
+| 进程入口、WebSocket、ACK、心跳、token 刷新 | `XianyuAutoAgent/main.py` | 已作为第一阶段主骨架迁入；全局 `bot` 依赖已改为 `XianyuLive` 构造注入 |
 | 消息解密和基础过滤 | `XianyuAutoAgent/main.py` | 保留 base64/加密双路径、过期消息过滤和系统消息过滤 |
 | 商品信息 API | `XianyuAutoAgent/XianyuApis.py` | 保留 token、登录状态检查、商品详情获取；后续扩展订单接口 |
 | LLM 自动回复和意图路由 | `XianyuAutoAgent/XianyuAgent.py` | 保留 `price`、`tech`、`default`、`no_reply` 路由和安全过滤 |
