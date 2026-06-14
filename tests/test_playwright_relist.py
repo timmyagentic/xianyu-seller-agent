@@ -29,10 +29,11 @@ class FakeElement:
 
 
 class FakePage:
-    def __init__(self, *, body_text, risk_control=False, confirm_after_click=True):
+    def __init__(self, *, body_text, risk_control=False, confirm_after_click=True, url="https://seller.goofish.com/#/seller-item"):
         self.body_text = body_text
         self.risk_control = risk_control
         self.confirm_after_click = confirm_after_click
+        self.url = url
         self.goto_urls = []
         self.stock_input = FakeElement()
         self.relist_button = FakeElement(on_click=self._after_relist_click)
@@ -108,3 +109,55 @@ def test_playwright_executor_does_not_report_success_without_page_confirmation()
     assert result.success is False
     assert result.failed_reason == "relist_confirmation_missing"
     assert page.relist_button.clicked is True
+
+
+def test_playwright_preview_detects_item_and_button_without_clicking_or_filling_stock():
+    page = FakePage(body_text="item-1 资料包 重新上架")
+    executor = PlaywrightRelistExecutor(
+        cookies_str="unb=seller-1; _m_h5_tk=token_123",
+        page_provider=lambda: page,
+    )
+
+    result = asyncio.run(
+        executor.preview(RelistRequest(item_id="item-1", expected_title="资料包", target_stock=7))
+    )
+
+    assert result["success"] is True
+    assert result["item_found"] is True
+    assert result["relist_button_found"] is True
+    assert result["would_fill_stock"] == 7
+    assert page.relist_button.clicked is False
+    assert page.stock_input.filled_values == []
+
+
+def test_playwright_preview_stops_on_risk_control_without_clicking():
+    page = FakePage(body_text="请拖动下方滑块完成验证", risk_control=True)
+    executor = PlaywrightRelistExecutor(
+        cookies_str="unb=seller-1; _m_h5_tk=token_123",
+        page_provider=lambda: page,
+    )
+
+    result = asyncio.run(executor.preview(RelistRequest(item_id="item-1", expected_title="资料包")))
+
+    assert result["success"] is False
+    assert result["failed_reason"] == "risk_control"
+    assert "滑块" in result["response_summary"]
+    assert page.relist_button.clicked is False
+
+
+def test_playwright_preview_reports_no_permission_redirect():
+    page = FakePage(
+        body_text="当前账号暂无权限",
+        url="https://seller.goofish.com/?site=COMMONPRO#/no-permission?redirectUrl=x",
+    )
+    executor = PlaywrightRelistExecutor(
+        cookies_str="unb=seller-1; _m_h5_tk=token_123",
+        page_provider=lambda: page,
+    )
+
+    result = asyncio.run(executor.preview(RelistRequest(item_id="item-1", expected_title="资料包")))
+
+    assert result["success"] is False
+    assert result["failed_reason"] == "permission_required"
+    assert "权限" in result["response_summary"]
+    assert page.relist_button.clicked is False

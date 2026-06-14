@@ -1058,6 +1058,14 @@ def build_cli_parser():
     relist_parser.add_argument("--stock", type=int, dest="target_stock")
     relist_parser.add_argument("--allow-playwright", action="store_true")
 
+    preflight_parser = listing_subparsers.add_parser("relist-preflight", help="只读预检授权浏览器是否能定位重新上架入口")
+    preflight_parser.add_argument("--item-id", required=True)
+    preflight_parser.add_argument("--expected-title", default="")
+    preflight_parser.add_argument("--stock", type=int, dest="target_stock")
+    preflight_parser.add_argument("--page-size", type=int, default=20)
+    preflight_parser.add_argument("--max-pages", type=int)
+    preflight_parser.add_argument("--myid")
+
     auto_relist_parser = listing_subparsers.add_parser("auto-relist", help="管理发货成功后的自动重新上架配置")
     auto_relist_subparsers = auto_relist_parser.add_subparsers(dest="auto_relist_command", required=True)
 
@@ -1226,6 +1234,55 @@ def run_cli(argv=None):
                 ]
                 print(json.dumps(payload, ensure_ascii=False, indent=2))
                 return 0
+
+        if args.listing_command == "relist-preflight":
+            if args.page_size < 1 or args.page_size > 100:
+                parser.error("listing relist-preflight --page-size must be between 1 and 100")
+            if args.max_pages is not None and args.max_pages < 1:
+                parser.error("listing relist-preflight --max-pages must be greater than 0")
+            if args.target_stock is not None and args.target_stock < 1:
+                parser.error("listing relist-preflight --stock must be greater than 0")
+
+            cookies_str = os.getenv("COOKIES_STR", "")
+            if not cookies_str:
+                print(json.dumps({"success": False, "message": "COOKIES_STR is required"}, ensure_ascii=False))
+                return 1
+
+            api = _build_xianyu_api_from_env()
+            status_result = api.get_item_status(
+                args.item_id,
+                page_size=args.page_size,
+                max_pages=args.max_pages,
+                myid=args.myid,
+            )
+            if not status_result.get("success"):
+                print(json.dumps(status_result, ensure_ascii=False, indent=2))
+                return 1
+            item = status_result.get("item") if isinstance(status_result.get("item"), dict) else {}
+            if item:
+                listing_store.save_item_snapshot(item)
+
+            executor = _build_playwright_relist_executor(
+                cookies_str=cookies_str,
+                allow_playwright=True,
+            )
+            request = load_relist_request(
+                {
+                    "item_id": args.item_id,
+                    "expected_title": args.expected_title,
+                    "target_stock": args.target_stock,
+                }
+            )
+            preview = asyncio.run(executor.preview(request))
+            payload = {
+                "success": bool(preview.get("success")),
+                "item": _public_item_status_payload(item),
+                "playwright": preview,
+                "snapshot_saved": bool(item),
+                "message": "preview only; no relist click executed",
+            }
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            return 0 if payload["success"] else 1
 
         if args.listing_command == "status":
             jobs = listing_store.list_jobs(limit=args.limit)

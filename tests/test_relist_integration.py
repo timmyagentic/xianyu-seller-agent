@@ -19,8 +19,22 @@ class FakeApi:
 
 
 class FakePlaywrightExecutor:
+    instances = []
+
     def __init__(self, **kwargs):
         self.kwargs = kwargs
+        FakePlaywrightExecutor.instances.append(self)
+
+    async def preview(self, request):
+        return {
+            "success": True,
+            "item_id": request.item_id,
+            "expected_title": request.expected_title,
+            "item_found": True,
+            "relist_button_found": True,
+            "would_fill_stock": request.target_stock,
+            "response_summary": "preview only; no click or stock fill executed",
+        }
 
 
 class FakeRelistService:
@@ -51,6 +65,56 @@ def test_listing_relist_cli_injects_api_client_when_cookies_exist(tmp_path, monk
     assert exit_code == 0
     assert payload["status"] == "manual_required"
     assert isinstance(FakeRelistService.instances[0].kwargs["api_client"], FakeApi)
+
+
+def test_listing_relist_preflight_uses_live_status_and_preview_executor(tmp_path, monkeypatch, capsys):
+    FakePlaywrightExecutor.instances = []
+
+    class FakeStatusApi:
+        def __init__(self):
+            self.session = FakeSession()
+
+        def get_item_status(self, item_id, *, page_size=20, max_pages=None, myid=None):
+            return {
+                "success": True,
+                "item": {
+                    "item_id": item_id,
+                    "title": "资料包",
+                    "status": "sold",
+                    "status_source": "item_detail",
+                    "platform_status": 1,
+                    "platform_status_text": "卖掉了",
+                    "can_relist": True,
+                },
+            }
+
+    monkeypatch.setenv("COOKIES_STR", "unb=seller-1; _m_h5_tk=token_123")
+    monkeypatch.setattr(main, "XianyuApis", FakeStatusApi)
+    monkeypatch.setattr(main, "PlaywrightRelistExecutor", FakePlaywrightExecutor)
+
+    exit_code = run_cli(
+        [
+            "listing",
+            "--db-path",
+            str(tmp_path / "listing.db"),
+            "relist-preflight",
+            "--item-id",
+            "item-1",
+            "--expected-title",
+            "资料包",
+            "--stock",
+            "7",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["success"] is True
+    assert payload["item"]["status"] == "sold"
+    assert payload["playwright"]["item_found"] is True
+    assert payload["playwright"]["relist_button_found"] is True
+    assert payload["playwright"]["would_fill_stock"] == 7
+    assert FakePlaywrightExecutor.instances[0].kwargs["cookies_str"]
 
 
 def test_post_delivery_relist_uses_live_api_and_authorized_executor(tmp_path, monkeypatch):
