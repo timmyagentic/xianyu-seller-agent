@@ -33,12 +33,12 @@
 
 | 能力 | 参考文件 | 迁移说明 |
 | --- | --- | --- |
-| 发货触发、订单幂等、发送重试 | `xianyu-auto-reply/websocket/app/services/xianyu/auto_delivery_handler.py` | 改写为 SQLite + 本地锁；不迁入 Redis 分布式锁 |
+| 发货触发、订单幂等、发送重试 | `xianyu-auto-reply/websocket/app/services/xianyu/auto_delivery_handler.py`、`xianyu_async.py`、`auto_reply_service.py` | 已在 `main.py` 中接入 `paid_order` 消息分支，默认受 `AUTO_DELIVERY_ENABLED=false` 保护；订单幂等改写为 SQLite 日志，不迁入 Redis 分布式锁 |
 | 内容变量替换 | `xianyu-auto-reply/websocket/app/services/xianyu/delivery_utils.py` | 已保留 `{order_id}`、`{item_id}`、`{buyer_id}` 等变量，并复用于 API 动态参数 |
 | 订单详情接口 | `auto_delivery_handler.py` 中 `_fetch_order_detail_from_api` | 已抽到 `services/delivery/orders.py` 并通过 `XianyuApis` 暴露解析和过期判断 helper |
 | 发货日志 | `auto_delivery_handler.py` 的 `_record_delivery_log` 思路 | 已落地为 `delivery_logs` 基础表，不接入后台消息日志表 |
 | 禁止重复发货 | `can_auto_delivery`、`mark_delivery_sent`、锁相关逻辑 | 已用 `delivery_logs` 的订单发送记录实现幂等跳过 |
-| `data` 库存消费 | `auto_delivery_handler.py` 中 `consume_batch_data` 的业务意图 | 已用 SQLite 事务按订单数量预占库存行，发送成功标记 `sent`，失败保留为 `failed_retryable` 并支持同订单重试复用 |
+| `data` 库存消费 | `auto_delivery_handler.py` 中 `consume_batch_data` 的业务意图 | 已用 SQLite 事务按订单数量预占库存行，发送成功标记 `sent`，失败保留为 `failed_retryable` 并支持同订单重试复用；本地 CLI 支持 `delivery inventory add/list` 管理一次性 key |
 
 暂不迁入：多级代理卡券、亦凡 API、免拼、自动确认发货、买家信用拦截、Redis 锁、后台通知。
 

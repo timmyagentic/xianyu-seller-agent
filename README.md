@@ -88,9 +88,14 @@ python main.py listing --help
 自动发货配置 CLI：
 
 ```bash
-python main.py delivery add --item-id 123 --type text --content "..."
+python main.py delivery add --item-id 123 --type text --content "固定发货内容"
+python main.py delivery add --item-id 456 --type data --name "一次性卡密"
+python main.py delivery inventory add --config-id 2 --content-file relist/local-keys.txt
 python main.py delivery list --item-id 123
+python main.py delivery inventory list --config-id 2
 ```
+
+`text` 类型适合同一商品所有买家收到相同内容；`data` 类型适合卡密、兑换码、账号 key 等一次性库存。`delivery inventory list` 默认只显示库存状态，不显示正文；确需本地排查时再加 `--show-content`。`relist/local-keys.txt` 这类库存文件只应放本地，不要提交。
 
 重新上架任务 CLI：
 
@@ -111,9 +116,11 @@ python main.py listing status
 - `MODEL_BASE_URL=https://api-inference.modelscope.cn/v1` 与 `MODEL_NAME=deepseek-ai/DeepSeek-V4-Pro`：默认使用 ModelScope 的 OpenAI 兼容接口；真实 `API_KEY` 只写入本地 `.env`。
 - `LLM_ENABLE_SEARCH=false`：默认不发送供应商特定的联网搜索扩展参数。
 - `AUTO_REPLY_ENABLED=true`：自动回复入口保留为默认可用。
-- `AUTO_DELIVERY_ENABLED=false`：自动发货默认关闭。
+- `AUTO_DELIVERY_ENABLED=false`：自动发货默认关闭。确认商品发货配置、库存和测试订单后，才在本地 `.env` 改成 `true`。
 - `AUTO_CONFIRM_DELIVERY_ENABLED=false`：自动确认发货默认关闭。
 - `AUTO_RELIST_ENABLED=false`：真实重新上架默认关闭。
+
+启用自动发货后，程序会监听“我已付款，等待你发货”“等待卖家发货”等付款完成消息，解析订单号、商品 ID、买家和会话，再按商品配置发货。同一订单已经写入 `sent` 日志后会跳过；`data` 库存会按订单购买数量先预占，发送成功后标记 `sent`，发送失败时保留为 `failed_retryable` 以便同一订单重试继续使用原 key。
 
 遇到 Cookie 失效、滑块、风控、账号归属不清或真实交易风险时，程序应记录原因并交给人工处理，不实现绕过逻辑。
 
@@ -126,6 +133,7 @@ python -m py_compile main.py XianyuApis.py XianyuAgent.py context_manager.py xia
 python -m pytest -q
 python main.py --help
 python main.py delivery --help
+python main.py delivery inventory --help
 python main.py listing --help
 ```
 

@@ -8,6 +8,7 @@ import argparse
 import websockets
 from loguru import logger
 from dotenv import load_dotenv, set_key
+from pathlib import Path
 from XianyuApis import XianyuApis
 import sys
 import random
@@ -859,6 +860,19 @@ def build_cli_parser():
     list_parser = delivery_subparsers.add_parser("list", help="列出发货配置")
     list_parser.add_argument("--item-id")
 
+    inventory_parser = delivery_subparsers.add_parser("inventory", help="管理一次性发货库存")
+    inventory_subparsers = inventory_parser.add_subparsers(dest="inventory_command", required=True)
+
+    inventory_add_parser = inventory_subparsers.add_parser("add", help="新增一次性库存内容")
+    inventory_add_parser.add_argument("--config-id", type=int, required=True)
+    inventory_add_parser.add_argument("--content", action="append", default=[])
+    inventory_add_parser.add_argument("--content-file")
+
+    inventory_list_parser = inventory_subparsers.add_parser("list", help="列出一次性库存状态")
+    inventory_list_parser.add_argument("--config-id", type=int, required=True)
+    inventory_list_parser.add_argument("--status")
+    inventory_list_parser.add_argument("--show-content", action="store_true")
+
     listing_parser = subparsers.add_parser("listing", help="管理已有商品重新上架任务")
     listing_parser.add_argument("--db-path", default=os.getenv("DB_PATH", "data/chat_history.db"))
     listing_subparsers = listing_parser.add_subparsers(dest="listing_command", required=True)
@@ -908,6 +922,36 @@ def run_cli(argv=None):
             ]
             print(json.dumps(payload, ensure_ascii=False, indent=2))
             return 0
+        if args.delivery_command == "inventory":
+            if args.inventory_command == "add":
+                contents = list(args.content or [])
+                if args.content_file:
+                    lines = Path(args.content_file).read_text(encoding="utf-8").splitlines()
+                    contents.extend(line.strip() for line in lines if line.strip())
+                if not contents:
+                    parser.error("delivery inventory add requires --content or --content-file")
+                row_ids = store.add_inventory(args.config_id, contents)
+                print(json.dumps({"config_id": args.config_id, "added": len(row_ids)}, ensure_ascii=False))
+                return 0
+
+            if args.inventory_command == "list":
+                rows = store.list_inventory(args.config_id, status=args.status)
+                payload = []
+                for row in rows:
+                    item = {
+                        "id": row.id,
+                        "config_id": row.config_id,
+                        "status": row.status,
+                        "reserved_order_no": row.reserved_order_no,
+                        "reservation_line_no": row.reservation_line_no,
+                        "sent_at": row.sent_at,
+                        "failed_reason": row.failed_reason,
+                    }
+                    if args.show_content:
+                        item["content"] = row.content
+                    payload.append(item)
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+                return 0
 
     if args.command == "listing":
         listing_store = ListingStore(db_path=args.db_path)
