@@ -1,4 +1,5 @@
 import os
+import hashlib
 import sqlite3
 from datetime import datetime
 from typing import Iterable
@@ -167,6 +168,151 @@ class DeliveryStore:
         with sqlite3.connect(self.db_path) as conn:
             rows = conn.execute(query, params).fetchall()
         return [self._inventory_from_row(row) for row in rows]
+
+    def reserve_inventory(self, *, config_id: int, order_no: str, quantity: int) -> list[DeliveryInventoryItem]:
+        if quantity <= 0:
+            raise ValueError("quantity must be positive")
+
+        now = datetime.now().isoformat()
+        with sqlite3.connect(self.db_path) as conn:
+            existing = conn.execute(
+                """
+                SELECT id, config_id, content, status, reserved_order_no, reservation_id,
+                       reservation_line_no, reserved_at, sent_at, failed_reason
+                FROM delivery_inventory
+                WHERE config_id = ?
+                  AND reserved_order_no = ?
+                  AND status IN ('reserved', 'failed_retryable', 'sent')
+                ORDER BY reservation_line_no ASC
+                """,
+                (config_id, order_no),
+            ).fetchall()
+            if len(existing) >= quantity:
+                return [self._inventory_from_row(row) for row in existing[:quantity]]
+
+            available = conn.execute(
+                """
+                SELECT id
+                FROM delivery_inventory
+                WHERE config_id = ? AND status = 'available'
+                ORDER BY id ASC
+                LIMIT ?
+                """,
+                (config_id, quantity),
+            ).fetchall()
+            if len(available) < quantity:
+                return []
+
+            reservation_id = f"{order_no}-{int(datetime.now().timestamp() * 1000)}"
+            for line_no, (row_id,) in enumerate(available, start=1):
+                conn.execute(
+                    """
+                    UPDATE delivery_inventory
+                    SET status = 'reserved',
+                        reserved_order_no = ?,
+                        reservation_id = ?,
+                        reservation_line_no = ?,
+                        reserved_at = ?,
+                        failed_reason = NULL,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (order_no, reservation_id, line_no, now, now, row_id),
+                )
+
+            rows = conn.execute(
+                """
+                SELECT id, config_id, content, status, reserved_order_no, reservation_id,
+                       reservation_line_no, reserved_at, sent_at, failed_reason
+                FROM delivery_inventory
+                WHERE config_id = ? AND reserved_order_no = ?
+                ORDER BY reservation_line_no ASC
+                """,
+                (config_id, order_no),
+            ).fetchall()
+            return [self._inventory_from_row(row) for row in rows]
+
+    def mark_inventory_sent(self, row_ids: list[int]) -> None:
+        if not row_ids:
+            return
+        now = datetime.now().isoformat()
+        placeholders = ",".join("?" for _ in row_ids)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                f"""
+                UPDATE delivery_inventory
+                SET status = 'sent', sent_at = ?, updated_at = ?, failed_reason = NULL
+                WHERE id IN ({placeholders})
+                """,
+                (now, now, *row_ids),
+            )
+
+    def mark_inventory_failed(self, row_ids: list[int], reason: str) -> None:
+        if not row_ids:
+            return
+        now = datetime.now().isoformat()
+        placeholders = ",".join("?" for _ in row_ids)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                f"""
+                UPDATE delivery_inventory
+                SET status = 'failed_retryable', failed_reason = ?, updated_at = ?
+                WHERE id IN ({placeholders})
+                """,
+                (reason, now, *row_ids),
+            )
+
+    def has_sent_order(self, order_no: str) -> bool:
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT 1 FROM delivery_logs WHERE order_no = ? AND status = 'sent' LIMIT 1",
+                (order_no,),
+            ).fetchone()
+        return row is not None
+
+    def record_delivery_log(
+        self,
+        *,
+        order_no: str,
+        chat_id: str | None,
+        item_id: str | None,
+        buyer_id: str | None,
+        config_id: int | None,
+        content: str,
+        status: str,
+        failed_reason: str | None = None,
+    ) -> None:
+        now = datetime.now().isoformat()
+        content_digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO delivery_logs
+                (order_no, chat_id, item_id, buyer_id, config_id, content_digest, status, failed_reason, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(order_no, status)
+                DO UPDATE SET
+                    chat_id = excluded.chat_id,
+                    item_id = excluded.item_id,
+                    buyer_id = excluded.buyer_id,
+                    config_id = excluded.config_id,
+                    content_digest = excluded.content_digest,
+                    failed_reason = excluded.failed_reason,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    order_no,
+                    chat_id,
+                    item_id,
+                    buyer_id,
+                    config_id,
+                    content_digest,
+                    status,
+                    failed_reason,
+                    now,
+                    now,
+                ),
+            )
 
     def _config_from_row(self, row) -> DeliveryConfig:
         return DeliveryConfig(

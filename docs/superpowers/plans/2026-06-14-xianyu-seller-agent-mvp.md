@@ -234,25 +234,27 @@ git commit -m "feat: add delivery configuration store"
 - Modify: `services/delivery/store.py`
 - Modify: `main.py`
 
-- [ ] **Step 1: Write failing auto-delivery tests**
+- [x] **Step 1: Write failing auto-delivery tests**
 
 Cover paid-order trigger parsing, duplicate sent-order skip, text delivery generation, data reservation for quantity 1, data reservation for quantity N, insufficient inventory without partial reservation, send failure preserving reservations as retryable, and retry reusing the same reservation rows.
 
-- [ ] **Step 2: Run tests to verify failures**
+- [x] **Step 2: Run tests to verify failures**
 
 Run: `python -m pytest tests/test_delivery_service.py -q`
 
 Expected: fail because delivery service behavior is missing.
 
-- [ ] **Step 3: Implement service**
+- [x] **Step 3: Implement service**
 
 Create a `DeliveryService` that accepts a send callback and an order detail provider. Use `delivery_logs` and reservation state for idempotency. Keep auto-delivery disabled unless explicitly enabled by environment or config.
 
-- [ ] **Step 4: Wire into card update or paid-order messages**
+- [x] **Step 4: Wire into card update or paid-order messages**
+
+Stage note: this step establishes the injectable delivery service and safe default-off boundary. Real paid-message order number extraction is completed in Stage 5 before runtime triggering is enabled.
 
 Use `IncomingMessage.kind` and trigger keywords such as `我已付款，等待你发货` and `等待卖家发货`. Do not call real external APIs in tests.
 
-- [ ] **Step 5: Verify**
+- [x] **Step 5: Verify**
 
 Run:
 
@@ -263,7 +265,7 @@ python -m pytest tests/test_delivery_service.py tests/test_delivery_store.py tes
 
 Expected: pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add main.py services/delivery tests README.md docs/reference-implementation-map.md
