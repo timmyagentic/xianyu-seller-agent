@@ -102,13 +102,18 @@ python main.py delivery inventory list --config-id 2
 ```bash
 python main.py listing fetch-items
 python main.py listing relist --item-id 123
+python main.py listing relist --item-id 123 --stock 7
+python main.py listing auto-relist set --item-id 123 --stock 7
+python main.py listing auto-relist list --item-id 123
 python main.py listing relist relist/item-001.json
 python main.py listing status
 ```
 
 `listing fetch-items` 会参考 `xianyu-auto-reply` 的商品同步策略，调用闲鱼 `mtop.idle.web.xyh.item.list` 在售分组接口，分页获取当前账号所有已发布商品并写入本地 `items` 快照表。
 
-`listing relist` 默认不会执行真实平台点击；它先检查本地商品快照，已上架时幂等记录 `already_active` 并刷新发货绑定，未上架且没有授权 API/浏览器执行器时记录 `manual_required` 或 `playwright_required`。
+`listing relist` 默认不会执行真实平台点击；它先检查本地商品快照，已上架时幂等记录 `already_active` 并刷新发货绑定，未上架且没有授权 API/浏览器执行器时记录 `manual_required` 或 `playwright_required`。`--stock` 会作为目标库存写入重上架任务，并在后续接入真实 API 或授权浏览器执行器时传递给执行边界。
+
+`listing auto-relist set` 用于配置“发货成功后自动重新上架”的商品级策略。运行时还必须开启 `AUTO_RELIST_ENABLED=true`；否则配置只会保存，不会在付款发货后触发。
 
 ## 配置与默认关闭项
 
@@ -122,9 +127,10 @@ python main.py listing status
 - `AUTO_REPLY_ENABLED=true`：控制普通买家聊天是否进入 LLM 自动回复；付款完成消息仍由 `AUTO_DELIVERY_ENABLED` 单独控制。
 - `AUTO_DELIVERY_ENABLED=false`：自动发货默认关闭。确认商品发货配置、库存和测试订单后，才在本地 `.env` 改成 `true`。
 - `AUTO_CONFIRM_DELIVERY_ENABLED=false`：自动确认发货默认关闭。
-- `AUTO_RELIST_ENABLED=false`：真实重新上架默认关闭。
+- `AUTO_RELIST_ENABLED=false`：发货后自动重新上架默认关闭；即使商品已配置 `listing auto-relist set`，未打开该开关也不会触发。
+- `AUTO_RELIST_ALLOW_PLAYWRIGHT=false`：默认不允许自动创建浏览器执行任务；遇到没有稳定 API 的真实重新上架时只记录 `manual_required`。
 
-启用自动发货后，程序会监听“我已付款，等待你发货”“等待卖家发货”等付款完成消息，解析订单号、商品 ID、买家和会话，再按商品配置发货。同一订单已经写入 `sent` 日志后会跳过；`data` 库存会按订单购买数量先预占，发送成功后标记 `sent`，发送失败时保留为 `failed_retryable` 以便同一订单重试继续使用原 key。
+启用自动发货后，程序会监听“我已付款，等待你发货”“等待卖家发货”等付款完成消息，解析订单号、商品 ID、买家和会话，再按商品配置发货。同一订单已经写入 `sent` 日志后会跳过；`data` 库存会按订单购买数量先预占，发送成功后标记 `sent`，发送失败时保留为 `failed_retryable` 以便同一订单重试继续使用原 key。发货成功后，如果同时开启 `AUTO_RELIST_ENABLED=true` 且该商品存在启用的 `auto-relist` 配置，程序会创建重新上架任务并记录目标库存；失败只影响重新上架任务日志，不回滚已发货结果。
 
 遇到 Cookie 失效、滑块、风控、账号归属不清或真实交易风险时，程序应记录原因并交给人工处理，不实现绕过逻辑。
 

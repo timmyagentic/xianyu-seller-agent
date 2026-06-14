@@ -9,6 +9,7 @@ COOKIE_DOMAINS = (".goofish.com", ".taobao.com", ".alipay.com", ".seller.goofish
 class PlaywrightRelistCommand:
     item_id: str
     expected_title: str
+    target_stock: int | None
     management_url: str
     cookie_domains: tuple[str, ...]
 
@@ -17,11 +18,13 @@ def build_playwright_relist_command(
     *,
     item_id: str,
     expected_title: str = "",
+    target_stock: int | None = None,
     management_url: str = SELLER_MANAGEMENT_URL,
 ) -> PlaywrightRelistCommand:
     return PlaywrightRelistCommand(
         item_id=str(item_id),
         expected_title=str(expected_title or ""),
+        target_stock=target_stock,
         management_url=management_url,
         cookie_domains=COOKIE_DOMAINS,
     )

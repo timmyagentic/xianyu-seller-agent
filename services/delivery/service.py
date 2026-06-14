@@ -10,6 +10,7 @@ from .store import DeliveryStore
 
 
 SendMessage = Callable[..., Awaitable[bool] | bool]
+PostDeliveryHook = Callable[[OrderInfo, "DeliveryResult"], Awaitable[None] | None]
 
 
 @dataclass(frozen=True)
@@ -28,11 +29,13 @@ class DeliveryService:
         send_message: SendMessage,
         enabled: bool = False,
         api_client: ApiDeliveryClient | None = None,
+        post_delivery_hook: PostDeliveryHook | None = None,
     ):
         self.store = store
         self.send_message = send_message
         self.enabled = enabled
         self.api_client = api_client or ApiDeliveryClient()
+        self.post_delivery_hook = post_delivery_hook
 
     async def deliver_order(self, order: OrderInfo) -> DeliveryResult:
         if not self.enabled:
@@ -109,7 +112,28 @@ class DeliveryService:
             content=content,
             status="sent",
         )
-        return DeliveryResult(status="sent", order_id=order.order_id, content=content)
+        result = DeliveryResult(status="sent", order_id=order.order_id, content=content)
+        await self._run_post_delivery_hook(order, result, config_id=config.id)
+        return result
+
+    async def _run_post_delivery_hook(self, order: OrderInfo, result: DeliveryResult, *, config_id: int | None) -> None:
+        if not self.post_delivery_hook:
+            return
+        try:
+            hook_result = self.post_delivery_hook(order, result)
+            if inspect.isawaitable(hook_result):
+                await hook_result
+        except Exception as exc:
+            self.store.record_delivery_log(
+                order_no=order.order_id,
+                chat_id=order.chat_id,
+                item_id=order.item_id,
+                buyer_id=order.buyer_id,
+                config_id=config_id,
+                content=result.content,
+                status="post_delivery_hook_failed",
+                failed_reason=str(exc),
+            )
 
     async def _send(self, order: OrderInfo, content: str) -> None:
         result = self.send_message(

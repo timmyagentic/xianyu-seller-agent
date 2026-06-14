@@ -76,11 +76,14 @@ class XianyuLive:
             message_expire_time_ms=self.message_expire_time,
         )
         self.message_deduplicator = MessageDeduplicator()
-        self.delivery_store = DeliveryStore(db_path=os.getenv("DB_PATH", "data/chat_history.db"))
+        db_path = os.getenv("DB_PATH", "data/chat_history.db")
+        self.delivery_store = DeliveryStore(db_path=db_path)
+        self.listing_store = ListingStore(db_path=db_path)
         self.delivery_service = DeliveryService(
             store=self.delivery_store,
             send_message=self.send_delivery_message,
             enabled=os.getenv("AUTO_DELIVERY_ENABLED", "false").lower() == "true",
+            post_delivery_hook=self.handle_post_delivery_relist,
         )
         self.order_detail_provider = self.fetch_order_detail_for_delivery
         
@@ -652,6 +655,36 @@ class XianyuLive:
             await self.mark_message_read(websocket, incoming.chat_id, incoming.message_id)
         return result
 
+    async def handle_post_delivery_relist(self, order: OrderInfo, result):
+        if os.getenv("AUTO_RELIST_ENABLED", "false").lower() != "true":
+            return
+
+        config = self.listing_store.get_enabled_auto_relist_config(order.item_id)
+        if not config:
+            return
+
+        allow_playwright = config.allow_playwright or os.getenv("AUTO_RELIST_ALLOW_PLAYWRIGHT", "false").lower() == "true"
+        service = RelistService(
+            listing_store=self.listing_store,
+            delivery_store=self.delivery_store,
+            allow_playwright=allow_playwright,
+        )
+        relist_result = await service.relist(
+            {
+                "item_id": order.item_id,
+                "expected_title": config.expected_title or order.item_title,
+                "target_stock": config.target_stock,
+            }
+        )
+        logger.info(
+            "发货后自动重新上架结果: 订单={}, 商品={}, 目标库存={}, 状态={}, 原因={}",
+            order.order_id,
+            order.item_id,
+            config.target_stock,
+            relist_result.status,
+            relist_result.failed_reason,
+        )
+
     async def _load_order_detail_for_delivery(self, order_id: str) -> OrderDetail:
         provider = getattr(self, "order_detail_provider", None)
         if not provider:
@@ -962,7 +995,21 @@ def build_cli_parser():
     relist_parser.add_argument("--delivery-type", choices=["text", "data", "api"])
     relist_parser.add_argument("--delivery-content", default="")
     relist_parser.add_argument("--delivery-name", default="")
+    relist_parser.add_argument("--stock", type=int, dest="target_stock")
     relist_parser.add_argument("--allow-playwright", action="store_true")
+
+    auto_relist_parser = listing_subparsers.add_parser("auto-relist", help="管理发货成功后的自动重新上架配置")
+    auto_relist_subparsers = auto_relist_parser.add_subparsers(dest="auto_relist_command", required=True)
+
+    auto_relist_set_parser = auto_relist_subparsers.add_parser("set", help="设置商品发货后自动重新上架")
+    auto_relist_set_parser.add_argument("--item-id", required=True)
+    auto_relist_set_parser.add_argument("--stock", type=int, required=True, dest="target_stock")
+    auto_relist_set_parser.add_argument("--expected-title", default="")
+    auto_relist_set_parser.add_argument("--disabled", action="store_true")
+    auto_relist_set_parser.add_argument("--allow-playwright", action="store_true")
+
+    auto_relist_list_parser = auto_relist_subparsers.add_parser("list", help="列出发货后自动重新上架配置")
+    auto_relist_list_parser.add_argument("--item-id")
 
     status_parser = listing_subparsers.add_parser("status", help="列出最近的重新上架任务")
     status_parser.add_argument("--limit", type=int, default=20)
@@ -1049,6 +1096,8 @@ def run_cli(argv=None):
                     "item_id": args.item_id,
                     "expected_title": args.expected_title,
                 }
+                if args.target_stock is not None:
+                    payload["target_stock"] = args.target_stock
                 if args.delivery_type:
                     payload["delivery"] = {
                         "type": args.delivery_type,
@@ -1065,6 +1114,45 @@ def run_cli(argv=None):
             result = asyncio.run(service.relist(request))
             print(json.dumps(result.__dict__, ensure_ascii=False, indent=2))
             return 0
+
+        if args.listing_command == "auto-relist":
+            if args.auto_relist_command == "set":
+                if args.target_stock < 1:
+                    parser.error("listing auto-relist set --stock must be greater than 0")
+                config_id = listing_store.upsert_auto_relist_config(
+                    item_id=args.item_id,
+                    target_stock=args.target_stock,
+                    expected_title=args.expected_title,
+                    enabled=not args.disabled,
+                    allow_playwright=args.allow_playwright,
+                )
+                config = listing_store.list_auto_relist_configs(item_id=args.item_id)[0]
+                payload = {
+                    "id": config_id,
+                    "item_id": config.item_id,
+                    "target_stock": config.target_stock,
+                    "expected_title": config.expected_title,
+                    "enabled": config.enabled,
+                    "allow_playwright": config.allow_playwright,
+                }
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+                return 0
+
+            if args.auto_relist_command == "list":
+                configs = listing_store.list_auto_relist_configs(item_id=args.item_id)
+                payload = [
+                    {
+                        "id": config.id,
+                        "item_id": config.item_id,
+                        "target_stock": config.target_stock,
+                        "expected_title": config.expected_title,
+                        "enabled": config.enabled,
+                        "allow_playwright": config.allow_playwright,
+                    }
+                    for config in configs
+                ]
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+                return 0
 
         if args.listing_command == "status":
             jobs = listing_store.list_jobs(limit=args.limit)

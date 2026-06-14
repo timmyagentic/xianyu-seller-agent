@@ -14,7 +14,20 @@ class RelistDeliveryConfig:
 class RelistRequest:
     item_id: str
     expected_title: str = ""
+    target_stock: int | None = None
     delivery: RelistDeliveryConfig | None = None
+
+
+@dataclass(frozen=True)
+class AutoRelistConfig:
+    id: int
+    item_id: str
+    target_stock: int
+    expected_title: str
+    enabled: bool
+    allow_playwright: bool
+    created_at: str
+    updated_at: str
 
 
 @dataclass(frozen=True)
@@ -40,6 +53,7 @@ class RelistResult:
     status: str
     item_id: str
     job_id: int | None = None
+    target_stock: int | None = None
     previous_status: str = ""
     final_status: str = ""
     item_url: str = ""
@@ -54,6 +68,7 @@ class ListingJob:
     task_type: str
     item_id: str
     expected_title: str
+    target_stock: int | None
     delivery_config: str
     previous_status: str
     result_status: str

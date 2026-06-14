@@ -1,4 +1,5 @@
 from .models import (
+    AutoRelistConfig,
     ItemSnapshot,
     ListingJob,
     RelistApiResult,
@@ -15,6 +16,7 @@ __all__ = [
     "ListingJob",
     "ListingStore",
     "PlaywrightRelistCommand",
+    "AutoRelistConfig",
     "RelistApiResult",
     "RelistDeliveryConfig",
     "RelistRequest",

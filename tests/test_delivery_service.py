@@ -49,6 +49,42 @@ def test_text_delivery_sends_rendered_content_once(tmp_path):
     assert store.has_sent_order("order-1") is True
 
 
+def test_delivery_service_runs_post_delivery_hook_after_success(tmp_path):
+    store = DeliveryStore(db_path=str(tmp_path / "delivery.db"))
+    store.add_config(item_id="item-1", name="文本", delivery_type="text", content="content")
+    sender = FakeSender()
+    hook_calls = []
+
+    async def post_delivery_hook(order, result):
+        hook_calls.append(
+            {
+                "order_id": order.order_id,
+                "item_id": order.item_id,
+                "status": result.status,
+                "content": result.content,
+            }
+        )
+
+    service = DeliveryService(
+        store=store,
+        send_message=sender,
+        enabled=True,
+        post_delivery_hook=post_delivery_hook,
+    )
+
+    result = asyncio.run(service.deliver_order(_order()))
+
+    assert result.status == "sent"
+    assert hook_calls == [
+        {
+            "order_id": "order-1",
+            "item_id": "item-1",
+            "status": "sent",
+            "content": "content",
+        }
+    ]
+
+
 def test_delivery_skips_order_that_was_already_sent(tmp_path):
     store = DeliveryStore(db_path=str(tmp_path / "delivery.db"))
     config_id = store.add_config(item_id="item-1", name="文本", delivery_type="text", content="content")

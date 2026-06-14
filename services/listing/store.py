@@ -3,7 +3,7 @@ import os
 import sqlite3
 from datetime import datetime
 
-from .models import ItemSnapshot, ListingJob, RelistRequest
+from .models import AutoRelistConfig, ItemSnapshot, ListingJob, RelistRequest
 
 
 def initialize_listing_schema(db_path: str) -> None:
@@ -30,6 +30,7 @@ def initialize_listing_schema(db_path: str) -> None:
                 task_type TEXT NOT NULL,
                 item_id TEXT NOT NULL,
                 expected_title TEXT,
+                target_stock INTEGER,
                 delivery_config TEXT,
                 previous_status TEXT,
                 result_status TEXT NOT NULL,
@@ -45,6 +46,28 @@ def initialize_listing_schema(db_path: str) -> None:
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_listing_jobs_item_id ON listing_jobs (item_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_listing_jobs_status ON listing_jobs (result_status)")
+        _ensure_column(conn, "listing_jobs", "target_stock", "INTEGER")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS auto_relist_configs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_id TEXT NOT NULL UNIQUE,
+                target_stock INTEGER NOT NULL,
+                expected_title TEXT NOT NULL DEFAULT '',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                allow_playwright INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_auto_relist_configs_item_id ON auto_relist_configs (item_id)")
+
+
+def _ensure_column(conn: sqlite3.Connection, table_name: str, column_name: str, column_type: str) -> None:
+    columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
+    if column_name not in columns:
+        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
 
 
 class ListingStore:
@@ -139,13 +162,14 @@ class ListingStore:
             cursor = conn.execute(
                 """
                 INSERT INTO listing_jobs
-                (task_type, item_id, expected_title, delivery_config, previous_status, result_status,
+                (task_type, item_id, expected_title, target_stock, delivery_config, previous_status, result_status,
                  final_status, item_url, screenshot_path, response_summary, failed_reason, created_at, updated_at)
-                VALUES ('relist', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES ('relist', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     request.item_id,
                     request.expected_title,
+                    request.target_stock,
                     delivery_config,
                     previous_status,
                     result_status,
@@ -160,11 +184,83 @@ class ListingStore:
             )
             return int(cursor.lastrowid)
 
+    def upsert_auto_relist_config(
+        self,
+        *,
+        item_id: str,
+        target_stock: int,
+        expected_title: str = "",
+        enabled: bool = True,
+        allow_playwright: bool = False,
+    ) -> int:
+        item_id = str(item_id).strip()
+        if not item_id:
+            raise ValueError("item_id is required")
+        if target_stock <= 0:
+            raise ValueError("target_stock must be positive")
+
+        now = datetime.now().isoformat()
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO auto_relist_configs
+                (item_id, target_stock, expected_title, enabled, allow_playwright, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(item_id)
+                DO UPDATE SET target_stock = excluded.target_stock,
+                              expected_title = excluded.expected_title,
+                              enabled = excluded.enabled,
+                              allow_playwright = excluded.allow_playwright,
+                              updated_at = excluded.updated_at
+                """,
+                (
+                    item_id,
+                    int(target_stock),
+                    str(expected_title or ""),
+                    1 if enabled else 0,
+                    1 if allow_playwright else 0,
+                    now,
+                    now,
+                ),
+            )
+            row = conn.execute(
+                "SELECT id FROM auto_relist_configs WHERE item_id = ?",
+                (item_id,),
+            ).fetchone()
+            return int(row[0])
+
+    def get_enabled_auto_relist_config(self, item_id: str) -> AutoRelistConfig | None:
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT id, item_id, target_stock, expected_title, enabled, allow_playwright, created_at, updated_at
+                FROM auto_relist_configs
+                WHERE item_id = ? AND enabled = 1
+                LIMIT 1
+                """,
+                (item_id,),
+            ).fetchone()
+        return self._auto_relist_config_from_row(row) if row else None
+
+    def list_auto_relist_configs(self, item_id: str | None = None) -> list[AutoRelistConfig]:
+        query = """
+            SELECT id, item_id, target_stock, expected_title, enabled, allow_playwright, created_at, updated_at
+            FROM auto_relist_configs
+        """
+        params: tuple[object, ...] = ()
+        if item_id:
+            query += " WHERE item_id = ?"
+            params = (item_id,)
+        query += " ORDER BY id ASC"
+        with sqlite3.connect(self.db_path) as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [self._auto_relist_config_from_row(row) for row in rows]
+
     def list_jobs(self, limit: int = 50) -> list[ListingJob]:
         with sqlite3.connect(self.db_path) as conn:
             rows = conn.execute(
                 """
-                SELECT id, task_type, item_id, expected_title, delivery_config, previous_status,
+                SELECT id, task_type, item_id, expected_title, target_stock, delivery_config, previous_status,
                        result_status, final_status, item_url, screenshot_path, response_summary,
                        failed_reason, created_at, updated_at
                 FROM listing_jobs
@@ -181,16 +277,29 @@ class ListingStore:
             task_type=row[1],
             item_id=row[2],
             expected_title=row[3] or "",
-            delivery_config=row[4] or "",
-            previous_status=row[5] or "",
-            result_status=row[6],
-            final_status=row[7] or "",
-            item_url=row[8] or "",
-            screenshot_path=row[9] or "",
-            response_summary=row[10] or "",
-            failed_reason=row[11] or "",
-            created_at=row[12],
-            updated_at=row[13],
+            target_stock=row[4],
+            delivery_config=row[5] or "",
+            previous_status=row[6] or "",
+            result_status=row[7],
+            final_status=row[8] or "",
+            item_url=row[9] or "",
+            screenshot_path=row[10] or "",
+            response_summary=row[11] or "",
+            failed_reason=row[12] or "",
+            created_at=row[13],
+            updated_at=row[14],
+        )
+
+    def _auto_relist_config_from_row(self, row) -> AutoRelistConfig:
+        return AutoRelistConfig(
+            id=int(row[0]),
+            item_id=row[1],
+            target_stock=int(row[2]),
+            expected_title=row[3] or "",
+            enabled=bool(row[4]),
+            allow_playwright=bool(row[5]),
+            created_at=row[6],
+            updated_at=row[7],
         )
 
     def _item_id_from_data(self, item: dict) -> str:

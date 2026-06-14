@@ -64,7 +64,7 @@ class RelistService:
             )
 
         if self.api_client:
-            api_result = await self._call_api(request.item_id)
+            api_result = await self._call_api(request)
             if api_result.success:
                 self._bind_delivery(request)
                 return self._record_result(
@@ -89,6 +89,7 @@ class RelistService:
             command = build_playwright_relist_command(
                 item_id=request.item_id,
                 expected_title=request.expected_title,
+                target_stock=request.target_stock,
             )
             return self._record_result(
                 request=request,
@@ -111,8 +112,21 @@ class RelistService:
             return await result
         return result
 
-    async def _call_api(self, item_id: str) -> RelistApiResult:
-        result = self.api_client.relist_item(item_id)
+    async def _call_api(self, request: RelistRequest) -> RelistApiResult:
+        kwargs: dict[str, Any] = {}
+        if request.target_stock is not None:
+            try:
+                signature = inspect.signature(self.api_client.relist_item)
+                parameters = signature.parameters
+                accepts_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values())
+                if accepts_kwargs or "stock" in parameters:
+                    kwargs["stock"] = request.target_stock
+                elif "target_stock" in parameters:
+                    kwargs["target_stock"] = request.target_stock
+            except (TypeError, ValueError):
+                pass
+
+        result = self.api_client.relist_item(request.item_id, **kwargs)
         if inspect.isawaitable(result):
             result = await result
         if isinstance(result, RelistApiResult):
@@ -158,6 +172,7 @@ class RelistService:
             status=status,
             item_id=request.item_id,
             job_id=job_id,
+            target_stock=request.target_stock,
             previous_status=previous_status,
             final_status=final_status,
             item_url=item_url,
@@ -181,12 +196,26 @@ def load_relist_request(value: RelistRequest | dict[str, Any] | str) -> RelistRe
     if not item_id:
         raise ValueError("item_id is required")
 
+    target_stock = _load_target_stock(data.get("target_stock", data.get("stock")))
     delivery = _load_delivery_config(data.get("delivery"), default_name=item_id)
     return RelistRequest(
         item_id=item_id,
         expected_title=str(data.get("expected_title") or data.get("expectedTitle") or "").strip(),
+        target_stock=target_stock,
         delivery=delivery,
     )
+
+
+def _load_target_stock(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        target_stock = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("stock must be a positive integer") from exc
+    if target_stock <= 0:
+        raise ValueError("stock must be a positive integer")
+    return target_stock
 
 
 def _load_delivery_config(value: Any, *, default_name: str) -> RelistDeliveryConfig | None:

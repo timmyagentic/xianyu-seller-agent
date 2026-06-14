@@ -25,6 +25,16 @@ class FakeRelistApi:
         return self.result
 
 
+class FakeStockRelistApi:
+    def __init__(self, result):
+        self.result = result
+        self.calls = []
+
+    async def relist_item(self, item_id, *, stock=None):
+        self.calls.append({"item_id": item_id, "stock": stock})
+        return self.result
+
+
 def _service(tmp_path, item, api_result=None, allow_playwright=False):
     db_path = str(tmp_path / "listing.db")
     return RelistService(
@@ -104,6 +114,32 @@ def test_relist_api_success_records_job_and_binds_delivery_config(tmp_path):
     job = service.listing_store.list_jobs()[0]
     assert job.result_status == "relisted"
     assert job.item_url == "https://goofish/item-1"
+
+
+def test_relist_request_passes_target_stock_to_api_and_records_job(tmp_path):
+    db_path = str(tmp_path / "listing.db")
+    item = ItemSnapshot(item_id="item-1", title="资料包", status="inactive")
+    api = FakeStockRelistApi(
+        RelistApiResult(
+            success=True,
+            final_status="active",
+            item_url="https://goofish/item-1",
+            response_summary="success",
+        )
+    )
+    service = RelistService(
+        listing_store=ListingStore(db_path=db_path),
+        delivery_store=DeliveryStore(db_path=db_path),
+        item_provider=FakeItemProvider(item),
+        api_client=api,
+    )
+
+    result = asyncio.run(service.relist(load_relist_request({"item_id": "item-1", "stock": 7})))
+
+    assert result.status == "relisted"
+    assert api.calls == [{"item_id": "item-1", "stock": 7}]
+    job = service.listing_store.list_jobs()[0]
+    assert job.target_stock == 7
 
 
 def test_relist_api_failure_returns_manual_required_reason(tmp_path):
