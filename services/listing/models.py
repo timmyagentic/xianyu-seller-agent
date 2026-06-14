@@ -44,6 +44,7 @@ class RelistApiResult:
     success: bool
     final_status: str = ""
     item_url: str = ""
+    screenshot_path: str = ""
     response_summary: str = ""
     failed_reason: str = ""
 

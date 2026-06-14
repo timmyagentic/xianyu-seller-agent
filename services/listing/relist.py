@@ -78,6 +78,7 @@ class RelistService:
                     previous_status=item.status,
                     final_status=api_result.final_status or "active",
                     item_url=api_result.item_url,
+                    screenshot_path=api_result.screenshot_path,
                     response_summary=api_result.response_summary,
                 )
 
@@ -93,7 +94,7 @@ class RelistService:
                             previous_status=item.status,
                             final_status=executor_result.final_status or "active",
                             item_url=executor_result.item_url,
-                            screenshot_path=getattr(executor_result, "screenshot_path", ""),
+                            screenshot_path=executor_result.screenshot_path,
                             response_summary=executor_result.response_summary,
                         )
                     return self._record_result(
@@ -130,7 +131,7 @@ class RelistService:
                         previous_status=item.status,
                         final_status=executor_result.final_status or "active",
                         item_url=executor_result.item_url,
-                        screenshot_path=getattr(executor_result, "screenshot_path", ""),
+                        screenshot_path=executor_result.screenshot_path,
                         response_summary=executor_result.response_summary,
                     )
                 return self._record_result(

@@ -7,7 +7,7 @@ from .models import (
     RelistRequest,
     RelistResult,
 )
-from .playwright_relist import PlaywrightRelistCommand, build_playwright_relist_command
+from .playwright_relist import PlaywrightRelistCommand, PlaywrightRelistExecutor, build_playwright_relist_command
 from .relist import RelistService, load_relist_request, map_relist_failure_reason
 from .store import ListingStore
 
@@ -16,6 +16,7 @@ __all__ = [
     "ListingJob",
     "ListingStore",
     "PlaywrightRelistCommand",
+    "PlaywrightRelistExecutor",
     "AutoRelistConfig",
     "RelistApiResult",
     "RelistDeliveryConfig",

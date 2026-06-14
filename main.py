@@ -21,6 +21,7 @@ from services.delivery.orders import OrderDetail, OrderInfo
 from services.delivery.service import DeliveryService
 from services.delivery.store import DeliveryStore
 from services.listing.fetch_items import sync_published_items
+from services.listing.playwright_relist import PlaywrightRelistExecutor
 from services.listing.relist import RelistService, load_relist_request
 from services.listing.store import ListingStore
 from services.messages import MessageDeduplicator, MessageParser
@@ -664,10 +665,17 @@ class XianyuLive:
             return
 
         allow_playwright = config.allow_playwright or os.getenv("AUTO_RELIST_ALLOW_PLAYWRIGHT", "false").lower() == "true"
+        cookie_string = self.sync_runtime_cookies()
+        relist_executor = _build_playwright_relist_executor(
+            cookies_str=cookie_string,
+            allow_playwright=allow_playwright,
+        )
         service = RelistService(
             listing_store=self.listing_store,
             delivery_store=self.delivery_store,
+            api_client=self.xianyu,
             allow_playwright=allow_playwright,
+            relist_executor=relist_executor,
         )
         relist_result = await service.relist(
             {
@@ -953,6 +961,27 @@ def run_qr_login_command():
     logger.info("扫码登录 Cookie 已保存至 .env")
 
 
+def _build_xianyu_api_from_env():
+    cookies_str = os.getenv("COOKIES_STR", "")
+    if not cookies_str:
+        return None
+    api = XianyuApis()
+    api.session.cookies.update(trans_cookies(cookies_str))
+    return api
+
+
+def _build_playwright_relist_executor(*, cookies_str: str, allow_playwright: bool):
+    if not allow_playwright or not cookies_str:
+        return None
+    screenshot_dir = os.getenv("AUTO_RELIST_SCREENSHOT_DIR", "data/relist-screenshots")
+    headless = os.getenv("AUTO_RELIST_PLAYWRIGHT_HEADLESS", "true").lower() != "false"
+    return PlaywrightRelistExecutor(
+        cookies_str=cookies_str,
+        headless=headless,
+        screenshot_dir=screenshot_dir,
+    )
+
+
 def build_cli_parser():
     parser = argparse.ArgumentParser(prog="python main.py")
     subparsers = parser.add_subparsers(dest="command")
@@ -1106,10 +1135,17 @@ def run_cli(argv=None):
                     }
                 request = load_relist_request(payload)
 
+            api_client = _build_xianyu_api_from_env()
+            relist_executor = _build_playwright_relist_executor(
+                cookies_str=os.getenv("COOKIES_STR", ""),
+                allow_playwright=args.allow_playwright,
+            )
             service = RelistService(
                 listing_store=listing_store,
                 delivery_store=delivery_store,
+                api_client=api_client,
                 allow_playwright=args.allow_playwright,
+                relist_executor=relist_executor,
             )
             result = asyncio.run(service.relist(request))
             print(json.dumps(result.__dict__, ensure_ascii=False, indent=2))
