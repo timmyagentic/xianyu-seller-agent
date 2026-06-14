@@ -74,6 +74,50 @@ class ListingStore:
             raw=data,
         )
 
+    def save_item_snapshots(self, items: list[dict]) -> tuple[int, int]:
+        saved_count = 0
+        changed_count = 0
+        for item in items:
+            saved, changed = self.save_item_snapshot(item)
+            if saved:
+                saved_count += 1
+            if changed:
+                changed_count += 1
+        return saved_count, changed_count
+
+    def save_item_snapshot(self, item: dict) -> tuple[bool, bool]:
+        item_id = self._item_id_from_data(item)
+        if not item_id or item_id.startswith("auto_"):
+            return False, False
+
+        now = datetime.now().isoformat()
+        normalized = dict(item)
+        normalized.setdefault("item_id", item_id)
+        normalized.setdefault("itemId", item_id)
+        data_json = json.dumps(normalized, ensure_ascii=False)
+        price = self._price_from_data(normalized)
+        description = self._description_from_data(normalized)
+
+        with sqlite3.connect(self.db_path) as conn:
+            existing = conn.execute(
+                "SELECT data, price, description FROM items WHERE item_id = ?",
+                (item_id,),
+            ).fetchone()
+            changed = existing != (data_json, price, description)
+            conn.execute(
+                """
+                INSERT INTO items (item_id, data, price, description, last_updated)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(item_id)
+                DO UPDATE SET data = excluded.data,
+                              price = excluded.price,
+                              description = excluded.description,
+                              last_updated = excluded.last_updated
+                """,
+                (item_id, data_json, price, description, now),
+            )
+        return True, changed
+
     def record_job(
         self,
         *,
@@ -148,6 +192,24 @@ class ListingStore:
             created_at=row[12],
             updated_at=row[13],
         )
+
+    def _item_id_from_data(self, item: dict) -> str:
+        return str(item.get("item_id") or item.get("itemId") or item.get("id") or "").strip()
+
+    def _price_from_data(self, item: dict) -> float | None:
+        price = item.get("price")
+        if price is None and isinstance(item.get("priceInfo"), dict):
+            price = item["priceInfo"].get("price")
+        if price is None:
+            price = item.get("soldPrice")
+        try:
+            text = "".join(ch for ch in str(price) if ch.isdigit() or ch == ".")
+            return float(text) if text else None
+        except (TypeError, ValueError):
+            return None
+
+    def _description_from_data(self, item: dict) -> str:
+        return str(item.get("description") or item.get("desc") or item.get("detail") or "")
 
 
 def normalize_item_status(value: object) -> str:

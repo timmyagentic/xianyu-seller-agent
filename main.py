@@ -20,6 +20,7 @@ from context_manager import ChatContextManager
 from services.delivery.orders import OrderDetail, OrderInfo
 from services.delivery.service import DeliveryService
 from services.delivery.store import DeliveryStore
+from services.listing.fetch_items import sync_published_items
 from services.listing.relist import RelistService, load_relist_request
 from services.listing.store import ListingStore
 from services.messages import MessageDeduplicator, MessageParser
@@ -966,6 +967,11 @@ def build_cli_parser():
     status_parser = listing_subparsers.add_parser("status", help="列出最近的重新上架任务")
     status_parser.add_argument("--limit", type=int, default=20)
 
+    fetch_items_parser = listing_subparsers.add_parser("fetch-items", help="从闲鱼获取当前账号所有已发布商品")
+    fetch_items_parser.add_argument("--page-size", type=int, default=20)
+    fetch_items_parser.add_argument("--max-pages", type=int)
+    fetch_items_parser.add_argument("--myid")
+
     return parser
 
 
@@ -1065,6 +1071,29 @@ def run_cli(argv=None):
             payload = [job.__dict__ for job in jobs]
             print(json.dumps(payload, ensure_ascii=False, indent=2))
             return 0
+
+        if args.listing_command == "fetch-items":
+            if args.page_size < 1 or args.page_size > 100:
+                parser.error("listing fetch-items --page-size must be between 1 and 100")
+            if args.max_pages is not None and args.max_pages < 1:
+                parser.error("listing fetch-items --max-pages must be greater than 0")
+
+            cookies_str = os.getenv("COOKIES_STR", "")
+            if not cookies_str:
+                print(json.dumps({"success": False, "message": "COOKIES_STR is required"}, ensure_ascii=False))
+                return 1
+
+            api = XianyuApis()
+            api.session.cookies.update(trans_cookies(cookies_str))
+            result = sync_published_items(
+                api=api,
+                listing_store=listing_store,
+                page_size=args.page_size,
+                max_pages=args.max_pages,
+                myid=args.myid,
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0 if result.get("success") else 1
 
     parser.print_help()
     return 0

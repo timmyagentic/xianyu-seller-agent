@@ -100,10 +100,13 @@ python main.py delivery inventory list --config-id 2
 重新上架任务 CLI：
 
 ```bash
+python main.py listing fetch-items
 python main.py listing relist --item-id 123
 python main.py listing relist relist/item-001.json
 python main.py listing status
 ```
+
+`listing fetch-items` 会参考 `xianyu-auto-reply` 的商品同步策略，调用闲鱼 `mtop.idle.web.xyh.item.list` 在售分组接口，分页获取当前账号所有已发布商品并写入本地 `items` 快照表。
 
 `listing relist` 默认不会执行真实平台点击；它先检查本地商品快照，已上架时幂等记录 `already_active` 并刷新发货绑定，未上架且没有授权 API/浏览器执行器时记录 `manual_required` 或 `playwright_required`。
 

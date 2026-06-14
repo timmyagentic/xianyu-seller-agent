@@ -474,6 +474,150 @@ class XianyuApis:
             time.sleep(0.5)
             return self.get_item_info(item_id, retry_count + 1)
 
+    def get_published_items_page(self, page_number=1, page_size=20, myid=None, retry_count=0):
+        """获取当前账号已发布/在售商品列表的一页。"""
+        if retry_count >= 3:
+            logger.error("获取已发布商品失败，重试次数过多")
+            return {"success": False, "message": "获取已发布商品失败，重试次数过多"}
+
+        timestamp = str(int(time.time()) * 1000)
+        data_payload = {
+            "needGroupInfo": False,
+            "pageNumber": int(page_number),
+            "pageSize": int(page_size),
+            "groupName": "在售",
+            "groupId": "58877261",
+            "defaultGroup": True,
+            "userId": str(myid or self._cookie_value("unb")),
+        }
+        data_val = json.dumps(data_payload, separators=(",", ":"), ensure_ascii=False)
+        token = self._cookie_value("_m_h5_tk").split("_")[0]
+        params = {
+            'jsv': '2.7.2',
+            'appKey': '34839810',
+            't': timestamp,
+            'sign': generate_sign(timestamp, token, data_val),
+            'v': '1.0',
+            'type': 'originaljson',
+            'accountSite': 'xianyu',
+            'dataType': 'json',
+            'timeout': '20000',
+            'api': 'mtop.idle.web.xyh.item.list',
+            'sessionOption': 'AutoLoginOnly',
+            'spm_cnt': 'a21ybx.im.0.0',
+            'spm_pre': 'a21ybx.collection.menu.1.272b5141NafCNK',
+        }
+        headers = {
+            'accept': 'application/json',
+            'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'content-type': 'application/x-www-form-urlencoded',
+            'origin': 'https://www.goofish.com',
+            'referer': 'https://www.goofish.com/',
+            'cookie': self.get_cookie_string(),
+        }
+
+        try:
+            response = self.session.post(
+                'https://h5api.m.goofish.com/h5/mtop.idle.web.xyh.item.list/1.0/',
+                params=params,
+                data={'data': data_val},
+                headers=headers,
+            )
+            res_json = response.json()
+            updated_cookies = self._merge_response_cookies(response)
+            if not isinstance(res_json, dict):
+                return {"success": False, "message": f"商品列表API返回格式异常: {res_json}"}
+
+            ret = res_json.get("ret", [])
+            if not any("SUCCESS" in str(item) for item in ret):
+                if is_token_expired_ret(ret):
+                    if updated_cookies:
+                        logger.debug(f"已发布商品列表检测到Set-Cookie，已更新 {len(updated_cookies)} 个cookie字段")
+                    time.sleep(0.5)
+                    return self.get_published_items_page(page_number, page_size, myid, retry_count + 1)
+                message = ret[0] if ret else "获取已发布商品失败"
+                logger.warning(f"已发布商品列表API调用失败: {message}")
+                return {"success": False, "message": message, "ret": ret}
+
+            card_list = res_json.get("data", {}).get("cardList", [])
+            items = []
+            for card in card_list:
+                card_data = card.get("cardData", {}) if isinstance(card, dict) else {}
+                if not card_data:
+                    continue
+                price_info = card_data.get("priceInfo", {}) or {}
+                items.append(
+                    {
+                        "id": str(card_data.get("id", "")),
+                        "title": card_data.get("title", ""),
+                        "price": price_info.get("price", ""),
+                        "price_text": f"{price_info.get('preText', '')}{price_info.get('price', '')}",
+                        "category_id": card_data.get("categoryId", ""),
+                        "auction_type": card_data.get("auctionType", ""),
+                        "item_status": card_data.get("itemStatus", 0),
+                        "detail_url": card_data.get("detailUrl", ""),
+                        "pic_info": card_data.get("picInfo", {}),
+                        "detail_params": card_data.get("detailParams", {}),
+                        "track_params": card_data.get("trackParams", {}),
+                        "item_label_data": card_data.get("itemLabelDataVO", {}),
+                        "card_type": card.get("cardType", 0),
+                    }
+                )
+
+            return {
+                "success": True,
+                "message": f"获取到第 {page_number} 页商品，共 {len(items)} 件",
+                "page_number": int(page_number),
+                "page_size": int(page_size),
+                "current_count": len(items),
+                "items": items,
+                "raw_data": res_json.get("data", {}),
+            }
+        except Exception as e:
+            logger.error(f"已发布商品列表API请求异常: {str(e)}")
+            time.sleep(0.5)
+            return self.get_published_items_page(page_number, page_size, myid, retry_count + 1)
+
+    def get_all_published_items(self, *, page_size=20, max_pages=None, myid=None):
+        """自动翻页获取当前账号所有已发布/在售商品。"""
+        all_items = []
+        page_number = 1
+        fetched_pages = 0
+        while True:
+            if max_pages is not None and page_number > int(max_pages):
+                break
+
+            result = self.get_published_items_page(
+                page_number=page_number,
+                page_size=page_size,
+                myid=myid,
+            )
+            if not result.get("success"):
+                result.setdefault("items", all_items)
+                result.setdefault("total_count", len(all_items))
+                result.setdefault("total_pages", fetched_pages)
+                result.setdefault("page_size", page_size)
+                return result
+
+            items = result.get("items", [])
+            if not items:
+                break
+
+            all_items.extend(items)
+            fetched_pages = page_number
+            if len(items) < int(page_size):
+                break
+            page_number += 1
+
+        return {
+            "success": True,
+            "message": f"获取到 {len(all_items)} 个已发布商品",
+            "items": all_items,
+            "total_count": len(all_items),
+            "total_pages": fetched_pages,
+            "page_size": int(page_size),
+        }
+
     def get_order_detail(self, order_id, retry_count=0):
         """获取订单详情，供自动发货补全购买数量和规格信息。"""
         if retry_count >= 3:
