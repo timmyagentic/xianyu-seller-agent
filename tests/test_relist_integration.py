@@ -4,6 +4,7 @@ import json
 import main
 from main import XianyuLive, run_cli
 from services.delivery.orders import OrderInfo
+from services.delivery.service import DeliveryResult
 from services.listing.models import RelistResult
 from services.listing.store import ListingStore
 
@@ -193,7 +194,7 @@ def test_post_delivery_relist_allow_playwright_does_not_create_executor_without_
     asyncio.run(
         live.handle_post_delivery_relist(
             OrderInfo(order_id="order-1", item_id="item-1", buyer_id="buyer-1", chat_id="chat-1"),
-            object(),
+            DeliveryResult(status="sent", order_id="order-1"),
         )
     )
 
@@ -228,7 +229,7 @@ def test_post_delivery_relist_confirm_playwright_creates_authorized_executor(tmp
     asyncio.run(
         live.handle_post_delivery_relist(
             OrderInfo(order_id="order-1", item_id="item-1", buyer_id="buyer-1", chat_id="chat-1"),
-            object(),
+            DeliveryResult(status="sent", order_id="order-1"),
         )
     )
 
@@ -238,3 +239,33 @@ def test_post_delivery_relist_confirm_playwright_creates_authorized_executor(tmp
     assert isinstance(service.kwargs["relist_executor"], FakePlaywrightExecutor)
     assert service.kwargs["relist_executor"].kwargs["cookies_str"]
     assert service.requests[0]["target_stock"] == 7
+
+
+def test_post_delivery_relist_skips_non_sent_delivery_result(tmp_path, monkeypatch):
+    FakeRelistService.instances = []
+    FakePlaywrightExecutor.instances = []
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "listing.db"))
+    monkeypatch.setenv("AUTO_RELIST_ENABLED", "true")
+    monkeypatch.setenv("AUTO_RELIST_ALLOW_PLAYWRIGHT", "true")
+    monkeypatch.setenv("AUTO_RELIST_CONFIRM_PLAYWRIGHT", "true")
+    monkeypatch.setattr(main, "RelistService", FakeRelistService)
+    monkeypatch.setattr(main, "PlaywrightRelistExecutor", FakePlaywrightExecutor, raising=False)
+
+    live = XianyuLive("unb=seller-1; _m_h5_tk=token_123", reply_bot=object())
+    ListingStore(db_path=str(tmp_path / "listing.db")).upsert_auto_relist_config(
+        item_id="item-1",
+        target_stock=7,
+        expected_title="资料包",
+        enabled=True,
+        allow_playwright=True,
+    )
+
+    asyncio.run(
+        live.handle_post_delivery_relist(
+            OrderInfo(order_id="order-1", item_id="item-1", buyer_id="buyer-1", chat_id="chat-1"),
+            DeliveryResult(status="failed_retryable", order_id="order-1"),
+        )
+    )
+
+    assert FakeRelistService.instances == []
+    assert FakePlaywrightExecutor.instances == []

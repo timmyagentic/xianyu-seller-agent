@@ -657,6 +657,14 @@ class XianyuLive:
         return result
 
     async def handle_post_delivery_relist(self, order: OrderInfo, result):
+        if getattr(result, "status", "") != "sent":
+            logger.debug(
+                "跳过发货后自动重新上架: 订单={}, 商品={}, 发货状态={}",
+                order.order_id,
+                order.item_id,
+                getattr(result, "status", ""),
+            )
+            return
         if os.getenv("AUTO_RELIST_ENABLED", "false").lower() != "true":
             return
 
