@@ -510,6 +510,31 @@ class XianyuLive:
             await asyncio.sleep(total_delay)
 
         await self.send_msg(websocket, chat_id, send_user_id, bot_reply)
+        await self.mark_message_read(websocket, chat_id, incoming.message_id)
+
+    async def mark_message_read(self, websocket, chat_id: str, message_id: str | None):
+        """Clear the conversation red point and mark the incoming message as read."""
+        if not message_id:
+            logger.debug(f"会话 {chat_id} 缺少 messageId，跳过已读同步")
+            return
+
+        cid = chat_id if chat_id.endswith("@goofish") else f"{chat_id}@goofish"
+        clear_red_point = {
+            "lwp": "/r/Conversation/clearRedPoint",
+            "headers": {"mid": generate_mid()},
+            "body": [[{"cid": cid, "messageId": message_id}]],
+        }
+        mark_read = {
+            "lwp": "/r/MessageStatus/read",
+            "headers": {"mid": generate_mid()},
+            "body": [[message_id]],
+        }
+        try:
+            await websocket.send(json.dumps(clear_red_point))
+            await websocket.send(json.dumps(mark_read))
+            logger.info(f"已同步会话已读状态: {chat_id}")
+        except Exception as e:
+            logger.warning(f"同步会话已读状态失败: {chat_id}, {e}")
 
     async def send_heartbeat(self, ws):
         """发送心跳包并等待响应"""
