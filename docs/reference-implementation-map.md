@@ -38,7 +38,7 @@
 | 订单详情接口 | `auto_delivery_handler.py` 中 `_fetch_order_detail_from_api` | 抽到 `XianyuApis.py` 或 `services/delivery/orders.py` |
 | 发货日志 | `auto_delivery_handler.py` 的 `_record_delivery_log` 思路 | 落地为 `delivery_logs`，不接入后台消息日志表 |
 | 禁止重复发货 | `can_auto_delivery`、`mark_delivery_sent`、锁相关逻辑 | 第一版用订单号唯一约束和进程内锁即可 |
-| `data` 库存消费 | `auto_delivery_handler.py` 中 `consume_batch_data` 的业务意图 | 不能照搬“读一行再删除”的弱边界；落地时必须用 SQLite 事务先按订单唯一预占库存行，发送成功后标记 `sent`，失败保留为可重试或释放 |
+| `data` 库存消费 | `auto_delivery_handler.py` 中 `consume_batch_data` 的业务意图 | 不能照搬“读一行再删除”的弱边界；落地时必须用 SQLite 事务先按订单数量预占库存行，发送成功后标记 `sent`，失败保留为可重试或释放 |
 
 暂不迁入：多级代理卡券、亦凡 API、免拼、自动确认发货、买家信用拦截、Redis 锁、后台通知。
 
