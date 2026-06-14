@@ -14,6 +14,7 @@ import random
 from utils.xianyu_utils import generate_mid, generate_uuid, trans_cookies, generate_device_id, decrypt
 from XianyuAgent import XianyuReplyBot
 from context_manager import ChatContextManager
+from services.messages import MessageDeduplicator, MessageParser
 from xianyu_qr_login import QRLoginError, run_qr_login_cli
 
 
@@ -52,6 +53,12 @@ class XianyuLive:
         
         # 消息过期时间配置
         self.message_expire_time = int(os.getenv("MESSAGE_EXPIRE_TIME", "300000"))  # 消息过期时间，默认5分钟
+        self.message_parser = MessageParser(
+            myid=self.myid,
+            decrypt_func=decrypt,
+            message_expire_time_ms=self.message_expire_time,
+        )
+        self.message_deduplicator = MessageDeduplicator()
         
         # 人工接管关键词，从环境变量读取
         self.toggle_keywords = os.getenv("TOGGLE_KEYWORDS", "。")
@@ -378,180 +385,127 @@ class XianyuLive:
             except Exception as e:
                 pass
 
-            # 如果不是同步包消息，直接返回
-            if not self.is_sync_package(message_data):
+            incoming_messages = self.message_parser.parse_message_data(message_data)
+            if not incoming_messages:
                 return
 
-            # 获取并解密数据
-            sync_data = message_data["body"]["syncPushPackage"]["data"][0]
-            
-            # 检查是否有必要的字段
-            if "data" not in sync_data:
-                logger.debug("同步包中无data字段")
-                return
-
-            # 解密数据
-            try:
-                data = sync_data["data"]
-                try:
-                    data = base64.b64decode(data).decode("utf-8")
-                    data = json.loads(data)
-                    # logger.info(f"无需解密 message: {data}")
-                    return
-                except Exception as e:
-                    # logger.info(f'加密数据: {data}')
-                    decrypted_data = decrypt(data)
-                    message = json.loads(decrypted_data)
-            except Exception as e:
-                logger.error(f"消息解密失败: {e}")
-                return
-
-            try:
-                # 判断是否为订单消息,需要自行编写付款后的逻辑
-                if message['3']['redReminder'] == '等待买家付款':
-                    user_id = message['1'].split('@')[0]
-                    user_url = f'https://www.goofish.com/personal?userId={user_id}'
-                    logger.info(f'等待买家 {user_url} 付款')
-                    return
-                elif message['3']['redReminder'] == '交易关闭':
-                    user_id = message['1'].split('@')[0]
-                    user_url = f'https://www.goofish.com/personal?userId={user_id}'
-                    logger.info(f'买家 {user_url} 交易关闭')
-                    return
-                elif message['3']['redReminder'] == '等待卖家发货':
-                    user_id = message['1'].split('@')[0]
-                    user_url = f'https://www.goofish.com/personal?userId={user_id}'
-                    logger.info(f'交易成功 {user_url} 等待卖家发货')
-                    return
-
-            except:
-                pass
-
-            # 判断消息类型
-            if self.is_typing_status(message):
-                logger.debug("用户正在输入")
-                return
-            elif not self.is_chat_message(message):
-                logger.debug("其他非聊天消息")
-                logger.debug(f"原始消息: {message}")
-                return
-
-            # 处理聊天消息
-            create_time = int(message["1"]["5"])
-            send_user_name = message["1"]["10"]["reminderTitle"]
-            send_user_id = message["1"]["10"]["senderUserId"]
-            send_message = message["1"]["10"]["reminderContent"]
-            
-            # 时效性验证（过滤5分钟前消息）
-            if (time.time() * 1000 - create_time) > self.message_expire_time:
-                logger.debug("过期消息丢弃")
-                return
-                
-            # 获取商品ID和会话ID
-            url_info = message["1"]["10"]["reminderUrl"]
-            item_id = url_info.split("itemId=")[1].split("&")[0] if "itemId=" in url_info else None
-            chat_id = message["1"]["2"].split('@')[0]
-            
-            if not item_id:
-                logger.warning("无法获取商品ID")
-                return
-
-            # 检查是否为卖家（自己）发送的控制命令
-            if send_user_id == self.myid:
-                logger.debug("检测到卖家消息，检查是否为控制命令")
-                
-                # 检查切换命令
-                if self.check_toggle_keywords(send_message):
-                    mode = self.toggle_manual_mode(chat_id)
-                    if mode == "manual":
-                        logger.info(f"🔴 已接管会话 {chat_id} (商品: {item_id})")
-                    else:
-                        logger.info(f"🟢 已恢复会话 {chat_id} 的自动回复 (商品: {item_id})")
-                    return
-                
-                # 记录卖家人工回复
-                self.context_manager.add_message_by_chat(chat_id, self.myid, item_id, "assistant", send_message)
-                logger.info(f"卖家人工回复 (会话: {chat_id}, 商品: {item_id}): {send_message}")
-                return
-            
-            logger.info(f"用户: {send_user_name} (ID: {send_user_id}), 商品: {item_id}, 会话: {chat_id}, 消息: {send_message}")
-            
-            
-            # 如果当前会话处于人工接管模式，不进行自动回复
-            if self.is_manual_mode(chat_id):
-                logger.info(f"🔴 会话 {chat_id} 处于人工接管模式，跳过自动回复")
-                # 添加用户消息到上下文
-                self.context_manager.add_message_by_chat(chat_id, send_user_id, item_id, "user", send_message)
-                return
-            # 检查是否为带中括号的系统消息
-            if self.is_bracket_system_message(send_message):
-                logger.info(f"检测到系统消息：'{send_message}'，跳过自动回复")
-                return
-            if self.is_system_message(message):
-                logger.debug("系统消息，跳过处理")
-                return
-            # 从数据库中获取商品信息，如果不存在则从API获取并保存
-            item_info = self.context_manager.get_item_info(item_id)
-            if not item_info:
-                logger.info(f"从API获取商品信息: {item_id}")
-                api_result = self.xianyu.get_item_info(item_id)
-                if 'data' in api_result and 'itemDO' in api_result['data']:
-                    item_info = api_result['data']['itemDO']
-                    # 保存商品信息到数据库
-                    self.context_manager.save_item_info(item_id, item_info)
-                else:
-                    logger.warning(f"获取商品信息失败: {api_result}")
-                    return
-            else:
-                logger.info(f"从数据库获取商品信息: {item_id}")
-                
-            item_description=f"当前商品的信息如下：{self.build_item_description(item_info)}"
-            
-            # 获取完整的对话上下文
-            context = self.context_manager.get_context_by_chat(chat_id)
-            # 生成回复
-            bot_reply = self.reply_bot.generate_reply(
-                send_message,
-                item_description,
-                context=context
-            )
-            
-            # 检查是否需要回复
-            if bot_reply == "-":
-                logger.info(f"[无需回复] 用户 {send_user_name} 的消息被识别为无需回复类型")
-                return
-            
-            # 添加用户消息到上下文
-            self.context_manager.add_message_by_chat(chat_id, send_user_id, item_id, "user", send_message)
-            
-            # 检查是否为价格意图，如果是则增加议价次数
-            if self.reply_bot.last_intent == "price":
-                self.context_manager.increment_bargain_count_by_chat(chat_id)
-                bargain_count = self.context_manager.get_bargain_count_by_chat(chat_id)
-                logger.info(f"用户 {send_user_name} 对商品 {item_id} 的议价次数: {bargain_count}")
-            
-            # 添加机器人回复到上下文
-            self.context_manager.add_message_by_chat(chat_id, self.myid, item_id, "assistant", bot_reply)
-            
-            logger.info(f"机器人回复: {bot_reply}")
-            
-            # 模拟人工输入延迟
-            if self.simulate_human_typing:
-                # 基础延迟 0-1秒 + 每字 0.1-0.3秒
-                base_delay = random.uniform(0, 1)
-                typing_delay = len(bot_reply) * random.uniform(0.1, 0.3)
-                total_delay = base_delay + typing_delay
-                # 设置最大延迟上限，防止过长回复等待太久
-                total_delay = min(total_delay, 10.0)
-                
-                logger.info(f"模拟人工输入，延迟发送 {total_delay:.2f} 秒...")
-                await asyncio.sleep(total_delay)
-                
-            await self.send_msg(websocket, chat_id, send_user_id, bot_reply)
+            for incoming in incoming_messages:
+                if self.message_deduplicator.mark_seen(incoming.message_id):
+                    logger.debug(f"消息已处理，跳过: {incoming.message_id}")
+                    continue
+                await self.handle_incoming_message(incoming, websocket)
             
         except Exception as e:
             logger.error(f"处理消息时发生错误: {str(e)}")
             logger.debug(f"原始消息: {message_data}")
+
+    async def handle_incoming_message(self, incoming, websocket):
+        if incoming.kind != "chat":
+            logger.debug(f"非聊天消息，暂不触发自动回复: {incoming.kind}")
+            return
+
+        send_user_name = incoming.sender_name
+        send_user_id = incoming.sender_id
+        send_message = incoming.text
+        item_id = incoming.item_id
+        chat_id = incoming.chat_id
+        message = incoming.raw
+
+        if not item_id:
+            logger.warning("无法获取商品ID")
+            return
+
+        # 检查是否为卖家（自己）发送的控制命令
+        if incoming.is_from_self:
+            logger.debug("检测到卖家消息，检查是否为控制命令")
+
+            # 检查切换命令
+            if self.check_toggle_keywords(send_message):
+                mode = self.toggle_manual_mode(chat_id)
+                if mode == "manual":
+                    logger.info(f"🔴 已接管会话 {chat_id} (商品: {item_id})")
+                else:
+                    logger.info(f"🟢 已恢复会话 {chat_id} 的自动回复 (商品: {item_id})")
+                return
+
+            # 记录卖家人工回复
+            self.context_manager.add_message_by_chat(chat_id, self.myid, item_id, "assistant", send_message)
+            logger.info(f"卖家人工回复 (会话: {chat_id}, 商品: {item_id}): {send_message}")
+            return
+
+        logger.info(f"用户: {send_user_name} (ID: {send_user_id}), 商品: {item_id}, 会话: {chat_id}, 消息: {send_message}")
+
+        # 如果当前会话处于人工接管模式，不进行自动回复
+        if self.is_manual_mode(chat_id):
+            logger.info(f"🔴 会话 {chat_id} 处于人工接管模式，跳过自动回复")
+            # 添加用户消息到上下文
+            self.context_manager.add_message_by_chat(chat_id, send_user_id, item_id, "user", send_message)
+            return
+        # 检查是否为带中括号的系统消息
+        if self.is_bracket_system_message(send_message):
+            logger.info(f"检测到系统消息：'{send_message}'，跳过自动回复")
+            return
+        if self.is_system_message(message):
+            logger.debug("系统消息，跳过处理")
+            return
+        # 从数据库中获取商品信息，如果不存在则从API获取并保存
+        item_info = self.context_manager.get_item_info(item_id)
+        if not item_info:
+            logger.info(f"从API获取商品信息: {item_id}")
+            api_result = self.xianyu.get_item_info(item_id)
+            if 'data' in api_result and 'itemDO' in api_result['data']:
+                item_info = api_result['data']['itemDO']
+                # 保存商品信息到数据库
+                self.context_manager.save_item_info(item_id, item_info)
+            else:
+                logger.warning(f"获取商品信息失败: {api_result}")
+                return
+        else:
+            logger.info(f"从数据库获取商品信息: {item_id}")
+
+        item_description = f"当前商品的信息如下：{self.build_item_description(item_info)}"
+
+        # 获取完整的对话上下文
+        context = self.context_manager.get_context_by_chat(chat_id)
+        # 生成回复
+        bot_reply = self.reply_bot.generate_reply(
+            send_message,
+            item_description,
+            context=context
+        )
+
+        # 检查是否需要回复
+        if bot_reply == "-":
+            logger.info(f"[无需回复] 用户 {send_user_name} 的消息被识别为无需回复类型")
+            return
+
+        # 添加用户消息到上下文
+        self.context_manager.add_message_by_chat(chat_id, send_user_id, item_id, "user", send_message)
+
+        # 检查是否为价格意图，如果是则增加议价次数
+        if self.reply_bot.last_intent == "price":
+            self.context_manager.increment_bargain_count_by_chat(chat_id)
+            bargain_count = self.context_manager.get_bargain_count_by_chat(chat_id)
+            logger.info(f"用户 {send_user_name} 对商品 {item_id} 的议价次数: {bargain_count}")
+
+        # 添加机器人回复到上下文
+        self.context_manager.add_message_by_chat(chat_id, self.myid, item_id, "assistant", bot_reply)
+
+        logger.info(f"机器人回复: {bot_reply}")
+
+        # 模拟人工输入延迟
+        if self.simulate_human_typing:
+            # 基础延迟 0-1秒 + 每字 0.1-0.3秒
+            base_delay = random.uniform(0, 1)
+            typing_delay = len(bot_reply) * random.uniform(0.1, 0.3)
+            total_delay = base_delay + typing_delay
+            # 设置最大延迟上限，防止过长回复等待太久
+            total_delay = min(total_delay, 10.0)
+
+            logger.info(f"模拟人工输入，延迟发送 {total_delay:.2f} 秒...")
+            await asyncio.sleep(total_delay)
+
+        await self.send_msg(websocket, chat_id, send_user_id, bot_reply)
 
     async def send_heartbeat(self, ws):
         """发送心跳包并等待响应"""

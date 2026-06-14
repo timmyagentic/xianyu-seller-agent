@@ -25,9 +25,9 @@
 
 | 能力 | 参考文件 | 迁移说明 |
 | --- | --- | --- |
-| 消息去重和分发 | `xianyu-auto-reply/websocket/app/services/xianyu/message_handler.py` | 改写为轻量 `services/messages/`，不要依赖数据库配置和后台回调 |
-| 卡片更新消息 | 同上 | 用于付款状态变更和订单触发，保留解析逻辑 |
-| 营销/系统提示过滤 | 同上 | 保留明确的 `MsgTips` 过滤判断，避免误杀交易消息 |
+| 消息去重和分发 | `xianyu-auto-reply/websocket/app/services/xianyu/message_handler.py` | 已改写为轻量 `services/messages/`，不依赖数据库配置和后台回调 |
+| 卡片更新消息 | 同上 | 已保留解析逻辑，后续用于付款状态变更和订单触发 |
+| 营销/系统提示过滤 | 同上 | 已保留明确的 `MsgTips` 过滤判断，避免误杀交易消息 |
 
 ## 自动发货
 

@@ -140,25 +140,25 @@ git commit -m "feat: migrate auto reply baseline"
 - Create: `tests/test_message_parser.py`
 - Modify: `main.py`
 
-- [ ] **Step 1: Write failing parser tests**
+- [x] **Step 1: Write failing parser tests**
 
 Cover sync package detection, base64/decrypt fallback, normal chat parsing, card update parsing, item ID extraction from reminder URL and extJson, message ID extraction, marketing `MsgTips` filtering, expired message filtering, and own-seller message identification.
 
-- [ ] **Step 2: Run parser tests to verify failures**
+- [x] **Step 2: Run parser tests to verify failures**
 
 Run: `python -m pytest tests/test_message_parser.py -q`
 
 Expected: fail because `services.messages` does not exist.
 
-- [ ] **Step 3: Implement parser and model**
+- [x] **Step 3: Implement parser and model**
 
 Create an `IncomingMessage` dataclass with `chat_id`, `item_id`, `sender_id`, `sender_name`, `text`, `message_id`, `message_time`, `raw`, `is_from_self`, and `kind`. Port lightweight parsing behavior from `xianyu-auto-reply/websocket/app/services/xianyu/message_handler.py` without database callbacks.
 
-- [ ] **Step 4: Wire parser into `XianyuLive`**
+- [x] **Step 4: Wire parser into `XianyuLive`**
 
 Use the parser in `handle_message` while preserving ACK, heartbeat, token refresh, manual takeover, item cache lookup, context writes, and `send_msg`.
 
-- [ ] **Step 5: Verify**
+- [x] **Step 5: Verify**
 
 Run:
 
@@ -169,7 +169,7 @@ python -m pytest tests/test_message_parser.py tests/test_context_manager.py test
 
 Expected: pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add main.py services tests docs/reference-implementation-map.md
