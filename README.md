@@ -120,7 +120,7 @@ python main.py listing status
 
 `listing relist` 会在 `COOKIES_STR` 存在时先通过当前账号刷新商品真实状态：优先查询在售列表，未命中时再用商品详情接口兜底，避免本地旧快照把下架/售出商品误判为 `already_active`。如果配置了 `XIANYU_RELIST_API`，会按 `xianyu-auto-reply` 的 seller mtop 操作模式签名调用该接口；未配置或 API 失败时，默认记录 `manual_required`。只传 `--allow-playwright` 时不会点击页面，只会在任务中记录需要授权浏览器执行；只有同时传入 `--allow-playwright --confirm-real-relist`，CLI 才会创建真实 Playwright 执行器。
 
-授权 Playwright 执行器只处理“商品管理页已有目标商品并出现重新上架入口”的场景：它会设置目标库存、点击“重新上架/恢复上架/上架”，并且只有页面出现“操作成功/上架成功/已上架/在售”等确认文本后才记录 `relisted`。如果检测到登录页、滑块、验证码、风控提示、找不到目标商品、找不到按钮或点击后没有确认结果，会记录 `playwright_required` 和失败原因，必要时保存截图到 `AUTO_RELIST_SCREENSHOT_DIR`，不会伪造成功。`--stock` 会作为目标库存写入任务，并传递给 mtop API 或授权浏览器执行器。
+授权 Playwright 执行器只处理“商品管理页已有目标商品并出现重新上架入口”的场景：它会设置目标库存、点击“重新上架/恢复上架/上架”，并且只有页面出现“操作成功/上架成功/已上架/在售”等确认文本后才记录 `relisted`。如果检测到登录页、滑块、验证码、风控提示、找不到目标商品、找不到按钮或点击后没有确认结果，会记录 `playwright_required` 和失败原因，必要时保存截图到 `AUTO_RELIST_SCREENSHOT_DIR`，不会伪造成功。`--stock` 会作为目标库存写入任务，并传递给 mtop API 或授权浏览器执行器。mtop API 或 Playwright 确认成功后，服务会再尝试刷新一次单商品真实状态，把执行后状态写入本地快照、`listing_jobs.final_status` 和响应摘要；如果刷新失败，则保留平台动作确认结果。
 
 `listing auto-relist set` 用于配置“发货成功后自动重新上架”的商品级策略。运行时还必须开启 `AUTO_RELIST_ENABLED=true`；否则配置只会保存，不会在付款发货后触发。
 

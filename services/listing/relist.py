@@ -72,33 +72,13 @@ class RelistService:
         if self.api_client:
             api_result = await self._call_api(request)
             if api_result.success:
-                self._save_relisted_snapshot(item, request, api_result)
-                self._bind_delivery(request)
-                return self._record_result(
-                    request=request,
-                    status="relisted",
-                    previous_status=item.status,
-                    final_status=api_result.final_status or "active",
-                    item_url=api_result.item_url,
-                    screenshot_path=api_result.screenshot_path,
-                    response_summary=api_result.response_summary,
-                )
+                return await self._record_relisted_success(item, request, api_result)
 
             if self.allow_playwright:
                 executor_result = await self._call_relist_executor(request)
                 if executor_result:
                     if executor_result.success:
-                        self._save_relisted_snapshot(item, request, executor_result)
-                        self._bind_delivery(request)
-                        return self._record_result(
-                            request=request,
-                            status="relisted",
-                            previous_status=item.status,
-                            final_status=executor_result.final_status or "active",
-                            item_url=executor_result.item_url,
-                            screenshot_path=executor_result.screenshot_path,
-                            response_summary=executor_result.response_summary,
-                        )
+                        return await self._record_relisted_success(item, request, executor_result)
                     return self._record_result(
                         request=request,
                         status="playwright_required",
@@ -127,17 +107,7 @@ class RelistService:
             executor_result = await self._call_relist_executor(request)
             if executor_result:
                 if executor_result.success:
-                    self._save_relisted_snapshot(item, request, executor_result)
-                    self._bind_delivery(request)
-                    return self._record_result(
-                        request=request,
-                        status="relisted",
-                        previous_status=item.status,
-                        final_status=executor_result.final_status or "active",
-                        item_url=executor_result.item_url,
-                        screenshot_path=executor_result.screenshot_path,
-                        response_summary=executor_result.response_summary,
-                    )
+                    return await self._record_relisted_success(item, request, executor_result)
                 return self._record_result(
                     request=request,
                     status="playwright_required",
@@ -227,6 +197,49 @@ class RelistService:
 
     def _playwright_required_reason(self, fallback: str) -> str:
         return self.playwright_required_reason or fallback
+
+    async def _record_relisted_success(
+        self,
+        item: ItemSnapshot,
+        request: RelistRequest,
+        action_result: RelistApiResult,
+    ) -> RelistResult:
+        post_action_item = await self._get_live_item(request.item_id)
+        final_status = action_result.final_status or "active"
+        item_url = action_result.item_url
+        response_summary = action_result.response_summary
+
+        if post_action_item:
+            final_status = post_action_item.status or final_status
+            item_url = item_url or post_action_item.item_url
+            response_summary = self._append_post_action_summary(response_summary, post_action_item)
+        else:
+            self._save_relisted_snapshot(item, request, action_result)
+
+        self._bind_delivery(request)
+        return self._record_result(
+            request=request,
+            status="relisted",
+            previous_status=item.status,
+            final_status=final_status,
+            item_url=item_url,
+            screenshot_path=action_result.screenshot_path,
+            response_summary=response_summary,
+        )
+
+    def _append_post_action_summary(self, response_summary: str, post_action_item: ItemSnapshot) -> str:
+        evidence = {
+            "post_action_status": post_action_item.status,
+            "post_action_item_id": post_action_item.item_id,
+        }
+        if post_action_item.raw:
+            for key in ("status_source", "platform_status", "platform_status_text", "can_relist"):
+                if key in post_action_item.raw:
+                    evidence[key] = post_action_item.raw[key]
+        suffix = json.dumps(evidence, ensure_ascii=False)
+        if response_summary:
+            return f"{response_summary}\n{suffix}"
+        return suffix
 
     def _save_relisted_snapshot(
         self,

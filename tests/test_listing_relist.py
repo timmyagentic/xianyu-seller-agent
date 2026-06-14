@@ -51,6 +51,23 @@ class FakeStatusRelistApi:
         return self.relist_result
 
 
+class FakeSequentialStatusRelistApi:
+    def __init__(self, status_items, relist_result):
+        self.status_items = list(status_items)
+        self.relist_result = relist_result
+        self.status_calls = []
+        self.relist_calls = []
+
+    async def get_item_status(self, item_id):
+        self.status_calls.append(item_id)
+        item = self.status_items.pop(0)
+        return {"success": True, "item": item}
+
+    async def relist_item(self, item_id, *, stock=None):
+        self.relist_calls.append({"item_id": item_id, "stock": stock})
+        return self.relist_result
+
+
 class FakeRelistExecutor:
     def __init__(self, result):
         self.result = result
@@ -172,8 +189,11 @@ def test_relist_refreshes_live_item_status_before_using_local_snapshot(tmp_path)
     db_path = str(tmp_path / "listing.db")
     listing_store = ListingStore(db_path=db_path)
     listing_store.save_item_snapshot({"item_id": "item-1", "title": "资料包", "status": "active"})
-    api = FakeStatusRelistApi(
-        status_item={"item_id": "item-1", "title": "资料包", "status": "inactive"},
+    api = FakeSequentialStatusRelistApi(
+        status_items=[
+            {"item_id": "item-1", "title": "资料包", "status": "inactive"},
+            {"item_id": "item-1", "title": "资料包", "status": "active"},
+        ],
         relist_result=RelistApiResult(success=True, final_status="active", response_summary="success"),
     )
     service = RelistService(
@@ -185,11 +205,47 @@ def test_relist_refreshes_live_item_status_before_using_local_snapshot(tmp_path)
     result = asyncio.run(service.relist(load_relist_request({"item_id": "item-1", "stock": 7})))
 
     assert result.status == "relisted"
-    assert api.status_calls == ["item-1"]
+    assert api.status_calls == ["item-1", "item-1"]
     assert api.relist_calls == [{"item_id": "item-1", "stock": 7}]
     assert listing_store.get_item_snapshot("item-1").status == "active"
     job = listing_store.list_jobs()[0]
     assert job.previous_status == "inactive"
+
+
+def test_relist_success_refreshes_post_action_status_and_records_final_state(tmp_path):
+    db_path = str(tmp_path / "listing.db")
+    listing_store = ListingStore(db_path=db_path)
+    api = FakeSequentialStatusRelistApi(
+        status_items=[
+            {"item_id": "item-1", "title": "资料包", "status": "inactive"},
+            {
+                "item_id": "item-1",
+                "title": "资料包",
+                "status": "active",
+                "status_source": "published_list",
+                "platform_status_text": "在售",
+            },
+        ],
+        relist_result=RelistApiResult(success=True, final_status="active", response_summary="api relist success"),
+    )
+    service = RelistService(
+        listing_store=listing_store,
+        delivery_store=DeliveryStore(db_path=db_path),
+        api_client=api,
+    )
+
+    result = asyncio.run(service.relist(load_relist_request({"item_id": "item-1", "stock": 7})))
+
+    assert result.status == "relisted"
+    assert api.status_calls == ["item-1", "item-1"]
+    assert result.previous_status == "inactive"
+    assert result.final_status == "active"
+    assert listing_store.get_item_snapshot("item-1").status == "active"
+    job = listing_store.list_jobs()[0]
+    assert job.result_status == "relisted"
+    assert job.previous_status == "inactive"
+    assert job.final_status == "active"
+    assert "post_action_status" in job.response_summary
 
 
 def test_relist_uses_authorized_playwright_executor_when_api_is_unavailable(tmp_path):
