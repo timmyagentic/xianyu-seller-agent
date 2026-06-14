@@ -208,6 +208,7 @@ class PlaywrightRelistExecutor:
             pass
 
         page_text = await self._body_text(page)
+        pre_action_page = await self._page_evidence(page, page_text, request)
         risk_reason = await self._detect_blocker(page, page_text)
         if risk_reason:
             screenshot_path = await self._save_screenshot(page, request.item_id, risk_reason)
@@ -216,6 +217,7 @@ class PlaywrightRelistExecutor:
                 failed_reason=risk_reason,
                 screenshot_path=screenshot_path,
                 response_summary=self._blocker_summary(risk_reason),
+                evidence=self._execution_evidence(pre_action_page=pre_action_page),
             )
 
         if request.expected_title and request.expected_title not in page_text:
@@ -223,12 +225,14 @@ class PlaywrightRelistExecutor:
                 success=False,
                 failed_reason="title_not_found",
                 response_summary=f"商品管理页未找到期望标题: {request.expected_title}",
+                evidence=self._execution_evidence(pre_action_page=pre_action_page),
             )
         if request.item_id not in page_text and request.expected_title not in page_text:
             return RelistApiResult(
                 success=False,
                 failed_reason="item_not_found_on_page",
                 response_summary=f"商品管理页未找到商品: {request.item_id}",
+                evidence=self._execution_evidence(pre_action_page=pre_action_page),
             )
 
         if request.target_stock is not None:
@@ -242,6 +246,7 @@ class PlaywrightRelistExecutor:
                 failed_reason="relist_button_not_found",
                 screenshot_path=screenshot_path,
                 response_summary="商品管理页未找到重新上架按钮",
+                evidence=self._execution_evidence(pre_action_page=pre_action_page),
             )
 
         await button.click()
@@ -252,6 +257,7 @@ class PlaywrightRelistExecutor:
             pass
 
         page_text_after = await self._body_text(page)
+        post_action_page = await self._page_evidence(page, page_text_after, request)
         risk_reason = await self._detect_blocker(page, page_text_after)
         if risk_reason:
             screenshot_path = await self._save_screenshot(page, request.item_id, risk_reason)
@@ -260,6 +266,10 @@ class PlaywrightRelistExecutor:
                 failed_reason=risk_reason,
                 screenshot_path=screenshot_path,
                 response_summary=self._blocker_summary(risk_reason),
+                evidence=self._execution_evidence(
+                    pre_action_page=pre_action_page,
+                    post_action_page=post_action_page,
+                ),
             )
         if any(keyword in page_text_after for keyword in SUCCESS_KEYWORDS):
             screenshot_path = await self._save_screenshot(page, request.item_id, "relisted")
@@ -268,6 +278,10 @@ class PlaywrightRelistExecutor:
                 final_status="active",
                 screenshot_path=screenshot_path,
                 response_summary=page_text_after[:800],
+                evidence=self._execution_evidence(
+                    pre_action_page=pre_action_page,
+                    post_action_page=post_action_page,
+                ),
             )
 
         screenshot_path = await self._save_screenshot(page, request.item_id, "confirmation_missing")
@@ -276,6 +290,10 @@ class PlaywrightRelistExecutor:
             failed_reason="relist_confirmation_missing",
             screenshot_path=screenshot_path,
             response_summary=page_text_after[:800] or "重新上架点击后未检测到平台确认结果",
+            evidence=self._execution_evidence(
+                pre_action_page=pre_action_page,
+                post_action_page=post_action_page,
+            ),
         )
 
     async def _preview_on_page(self, page, request: RelistRequest) -> dict:
@@ -465,6 +483,16 @@ class PlaywrightRelistExecutor:
             return len(await page.query_selector_all(selector))
         except Exception:
             return 0
+
+    def _execution_evidence(self, *, pre_action_page: dict, post_action_page: dict | None = None) -> dict:
+        evidence = {
+            "executor": "playwright",
+            "management_url": self.management_url,
+            "pre_action_page": pre_action_page,
+        }
+        if post_action_page is not None:
+            evidence["post_action_page"] = post_action_page
+        return evidence
 
     async def _save_screenshot(self, page, item_id: str, suffix: str) -> str:
         if not self.screenshot_dir:

@@ -48,6 +48,8 @@ class RelistService:
                 request=request,
                 status="item_not_found",
                 failed_reason=f"商品 {request.item_id} 不属于当前账号或本地商品快照不存在",
+                action_source="lookup",
+                action_success=False,
             )
 
         if request.expected_title and request.expected_title not in item.title:
@@ -56,6 +58,9 @@ class RelistService:
                 status="title_mismatch",
                 previous_status=item.status,
                 failed_reason=f"商品标题不匹配: expected={request.expected_title}, actual={item.title}",
+                pre_action_item=item,
+                action_source="validation",
+                action_success=False,
             )
 
         if item.status == "active":
@@ -67,32 +72,48 @@ class RelistService:
                 final_status="active",
                 item_url=item.item_url,
                 response_summary="item already active; delivery binding refreshed",
+                pre_action_item=item,
+                post_action_item=item,
+                action_source="already_active",
+                action_success=True,
             )
 
         if self.api_client:
             api_result = await self._call_api(request)
             if api_result.success:
-                return await self._record_relisted_success(item, request, api_result)
+                return await self._record_relisted_success(item, request, api_result, action_source="api")
 
             if self.allow_playwright:
                 executor_result = await self._call_relist_executor(request)
                 if executor_result:
                     if executor_result.success:
-                        return await self._record_relisted_success(item, request, executor_result)
+                        return await self._record_relisted_success(
+                            item,
+                            request,
+                            executor_result,
+                            action_source="playwright",
+                        )
                     return self._record_result(
                         request=request,
                         status="playwright_required",
                         previous_status=item.status,
                         response_summary=executor_result.response_summary,
                         failed_reason=executor_result.failed_reason or "playwright_relist_failed",
+                        screenshot_path=executor_result.screenshot_path,
+                        pre_action_item=item,
+                        action_source="playwright",
+                        action_success=False,
+                        action_result=executor_result,
                     )
                 return self._record_playwright_required(
                     request=request,
                     previous_status=item.status,
+                    pre_action_item=item,
                     failed_reason=self._playwright_required_reason(
                         api_result.failed_reason
                         or "relist API unavailable; authorized Playwright/manual run required"
                     ),
+                    action_result=api_result,
                 )
 
             return self._record_result(
@@ -101,19 +122,28 @@ class RelistService:
                 previous_status=item.status,
                 response_summary=api_result.response_summary,
                 failed_reason=api_result.failed_reason or "relist_api_failed",
+                pre_action_item=item,
+                action_source="api",
+                action_success=False,
+                action_result=api_result,
             )
 
         if self.allow_playwright:
             executor_result = await self._call_relist_executor(request)
             if executor_result:
                 if executor_result.success:
-                    return await self._record_relisted_success(item, request, executor_result)
+                    return await self._record_relisted_success(item, request, executor_result, action_source="playwright")
                 return self._record_result(
                     request=request,
                     status="playwright_required",
                     previous_status=item.status,
                     response_summary=executor_result.response_summary,
                     failed_reason=executor_result.failed_reason or "playwright_relist_failed",
+                    screenshot_path=executor_result.screenshot_path,
+                    pre_action_item=item,
+                    action_source="playwright",
+                    action_success=False,
+                    action_result=executor_result,
                 )
 
             command = build_playwright_relist_command(
@@ -129,6 +159,9 @@ class RelistService:
                 failed_reason=self._playwright_required_reason(
                     "relist API unavailable; authorized Playwright/manual run required"
                 ),
+                pre_action_item=item,
+                action_source="playwright_required",
+                action_success=False,
             )
 
         return self._record_result(
@@ -136,6 +169,9 @@ class RelistService:
             status="manual_required",
             previous_status=item.status,
             failed_reason="relist API unavailable; manual verification required",
+            pre_action_item=item,
+            action_source="manual_required",
+            action_success=False,
         )
 
     async def _get_item(self, item_id: str) -> ItemSnapshot | None:
@@ -203,6 +239,8 @@ class RelistService:
         item: ItemSnapshot,
         request: RelistRequest,
         action_result: RelistApiResult,
+        *,
+        action_source: str,
     ) -> RelistResult:
         post_action_item = await self._get_live_item(request.item_id)
         final_status = action_result.final_status or "active"
@@ -225,6 +263,11 @@ class RelistService:
             item_url=item_url,
             screenshot_path=action_result.screenshot_path,
             response_summary=response_summary,
+            pre_action_item=item,
+            post_action_item=post_action_item,
+            action_source=action_source,
+            action_success=True,
+            action_result=action_result,
         )
 
     def _append_post_action_summary(self, response_summary: str, post_action_item: ItemSnapshot) -> str:
@@ -267,7 +310,9 @@ class RelistService:
         *,
         request: RelistRequest,
         previous_status: str,
+        pre_action_item: ItemSnapshot | None = None,
         failed_reason: str,
+        action_result: RelistApiResult | None = None,
     ) -> RelistResult:
         command = build_playwright_relist_command(
             item_id=request.item_id,
@@ -280,6 +325,10 @@ class RelistService:
             previous_status=previous_status,
             response_summary=json.dumps(command.__dict__, ensure_ascii=False),
             failed_reason=failed_reason,
+            pre_action_item=pre_action_item,
+            action_source="playwright_required",
+            action_success=False,
+            action_result=action_result,
         )
 
     def _bind_delivery(self, request: RelistRequest) -> None:
@@ -306,7 +355,26 @@ class RelistService:
         screenshot_path: str = "",
         response_summary: str = "",
         failed_reason: str = "",
+        pre_action_item: ItemSnapshot | None = None,
+        post_action_item: ItemSnapshot | None = None,
+        action_source: str = "",
+        action_success: bool | None = None,
+        action_result: RelistApiResult | None = None,
+        evidence: dict | None = None,
     ) -> RelistResult:
+        if evidence is None:
+            evidence = self._build_job_evidence(
+                request=request,
+                result_status=status,
+                previous_status=previous_status,
+                final_status=final_status,
+                failed_reason=failed_reason,
+                pre_action_item=pre_action_item,
+                post_action_item=post_action_item,
+                action_source=action_source,
+                action_success=action_success,
+                action_result=action_result,
+            )
         job_id = self.listing_store.record_job(
             request=request,
             result_status=status,
@@ -315,8 +383,10 @@ class RelistService:
             item_url=item_url,
             screenshot_path=screenshot_path,
             response_summary=response_summary,
+            evidence=evidence,
             failed_reason=failed_reason,
         )
+        evidence_json = json.dumps(evidence or {}, ensure_ascii=False)
         return RelistResult(
             status=status,
             item_id=request.item_id,
@@ -328,7 +398,77 @@ class RelistService:
             screenshot_path=screenshot_path,
             response_summary=response_summary,
             failed_reason=failed_reason,
+            evidence_json=evidence_json,
         )
+
+    def _build_job_evidence(
+        self,
+        *,
+        request: RelistRequest,
+        result_status: str,
+        previous_status: str = "",
+        final_status: str = "",
+        failed_reason: str = "",
+        pre_action_item: ItemSnapshot | None = None,
+        post_action_item: ItemSnapshot | None = None,
+        action_source: str = "",
+        action_success: bool | None = None,
+        action_result: RelistApiResult | None = None,
+    ) -> dict[str, Any]:
+        action: dict[str, Any] = {
+            "source": action_source or "unknown",
+            "success": bool(action_success) if action_success is not None else result_status == "relisted",
+            "result_status": result_status,
+        }
+        if final_status:
+            action["final_status"] = final_status
+        if failed_reason:
+            action["failed_reason"] = failed_reason
+        if action_result:
+            if action_result.final_status and "final_status" not in action:
+                action["final_status"] = action_result.final_status
+            if action_result.item_url:
+                action["item_url"] = action_result.item_url
+            if action_result.screenshot_path:
+                action["screenshot_path"] = action_result.screenshot_path
+            if action_result.failed_reason and "failed_reason" not in action:
+                action["failed_reason"] = action_result.failed_reason
+            if isinstance(action_result.evidence, dict):
+                action["evidence"] = action_result.evidence
+
+        evidence = {
+            "request": self._request_evidence(request),
+            "pre_action": self._item_evidence(pre_action_item, fallback_status=previous_status),
+            "action": action,
+        }
+        post_action = self._item_evidence(post_action_item, fallback_status=final_status)
+        if post_action:
+            evidence["post_action"] = post_action
+        return evidence
+
+    def _request_evidence(self, request: RelistRequest) -> dict[str, Any]:
+        return {
+            "item_id": request.item_id,
+            "expected_title": request.expected_title,
+            "target_stock": request.target_stock,
+            "delivery_present": bool(request.delivery),
+        }
+
+    def _item_evidence(self, item: ItemSnapshot | None, *, fallback_status: str = "") -> dict[str, Any]:
+        if not item:
+            return {"status": fallback_status} if fallback_status else {}
+        evidence: dict[str, Any] = {
+            "item_id": item.item_id,
+            "title": item.title,
+            "status": item.status,
+        }
+        if item.item_url:
+            evidence["item_url"] = item.item_url
+        if item.raw:
+            for key in ("status_source", "platform_status", "platform_status_text", "can_relist"):
+                if key in item.raw:
+                    evidence[key] = item.raw[key]
+        return evidence
 
 
 def load_relist_request(value: RelistRequest | dict[str, Any] | str) -> RelistRequest:
@@ -396,6 +536,11 @@ def parse_relist_api_response(response: dict[str, Any]) -> RelistApiResult:
     ret = response.get("ret", []) if isinstance(response, dict) else []
     data = response.get("data", {}) if isinstance(response, dict) else {}
     summary = json.dumps(response, ensure_ascii=False)[:800]
+    evidence = {
+        "executor": "mtop",
+        "ret": [str(item) for item in ret[:5]] if isinstance(ret, list) else [str(ret)],
+        "data_keys": sorted(data.keys()) if isinstance(data, dict) else [],
+    }
     if any("SUCCESS" in str(item) for item in ret):
         if data.get("success") is True or data.get("data") is True or data.get("code") == "success":
             return RelistApiResult(
@@ -403,16 +548,19 @@ def parse_relist_api_response(response: dict[str, Any]) -> RelistApiResult:
                 final_status="active",
                 item_url=str(data.get("itemUrl") or data.get("item_url") or ""),
                 response_summary=summary,
+                evidence=evidence,
             )
         return RelistApiResult(
             success=False,
             response_summary=summary,
             failed_reason=str(data.get("msg") or data or "relist_api_failed"),
+            evidence=evidence,
         )
     return RelistApiResult(
         success=False,
         response_summary=summary,
         failed_reason=map_relist_failure_reason(ret or data or response),
+        evidence=evidence,
     )
 
 

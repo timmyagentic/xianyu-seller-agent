@@ -38,6 +38,7 @@ def initialize_listing_schema(db_path: str) -> None:
                 item_url TEXT,
                 screenshot_path TEXT,
                 response_summary TEXT,
+                evidence_json TEXT,
                 failed_reason TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -47,6 +48,7 @@ def initialize_listing_schema(db_path: str) -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_listing_jobs_item_id ON listing_jobs (item_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_listing_jobs_status ON listing_jobs (result_status)")
         _ensure_column(conn, "listing_jobs", "target_stock", "INTEGER")
+        _ensure_column(conn, "listing_jobs", "evidence_json", "TEXT")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS auto_relist_configs (
@@ -151,20 +153,22 @@ class ListingStore:
         item_url: str = "",
         screenshot_path: str = "",
         response_summary: str = "",
+        evidence: dict | None = None,
         failed_reason: str = "",
     ) -> int:
         now = datetime.now().isoformat()
         delivery_config = ""
         if request.delivery:
             delivery_config = json.dumps(request.delivery.__dict__, ensure_ascii=False)
+        evidence_json = json.dumps(evidence or {}, ensure_ascii=False)
 
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO listing_jobs
                 (task_type, item_id, expected_title, target_stock, delivery_config, previous_status, result_status,
-                 final_status, item_url, screenshot_path, response_summary, failed_reason, created_at, updated_at)
-                VALUES ('relist', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 final_status, item_url, screenshot_path, response_summary, evidence_json, failed_reason, created_at, updated_at)
+                VALUES ('relist', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     request.item_id,
@@ -177,6 +181,7 @@ class ListingStore:
                     item_url,
                     screenshot_path,
                     response_summary,
+                    evidence_json,
                     failed_reason,
                     now,
                     now,
@@ -262,7 +267,7 @@ class ListingStore:
                 """
                 SELECT id, task_type, item_id, expected_title, target_stock, delivery_config, previous_status,
                        result_status, final_status, item_url, screenshot_path, response_summary,
-                       failed_reason, created_at, updated_at
+                       evidence_json, failed_reason, created_at, updated_at
                 FROM listing_jobs
                 ORDER BY id DESC
                 LIMIT ?
@@ -285,9 +290,10 @@ class ListingStore:
             item_url=row[9] or "",
             screenshot_path=row[10] or "",
             response_summary=row[11] or "",
-            failed_reason=row[12] or "",
-            created_at=row[13],
-            updated_at=row[14],
+            evidence_json=row[12] or "{}",
+            failed_reason=row[13] or "",
+            created_at=row[14],
+            updated_at=row[15],
         )
 
     def _auto_relist_config_from_row(self, row) -> AutoRelistConfig:

@@ -114,6 +114,9 @@ def test_playwright_executor_fills_stock_and_returns_success_after_page_confirma
     assert page.stock_input.filled_values[-1] == "7"
     assert page.relist_button.clicked is True
     assert "操作成功" in result.response_summary
+    assert result.evidence["executor"] == "playwright"
+    assert result.evidence["pre_action_page"]["element_counts"]["input"] == 1
+    assert result.evidence["post_action_page"]["body_text_length"] >= result.evidence["pre_action_page"]["body_text_length"]
 
 
 def test_playwright_executor_does_not_report_success_without_page_confirmation():

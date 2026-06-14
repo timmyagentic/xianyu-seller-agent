@@ -47,6 +47,7 @@ class RelistApiResult:
     screenshot_path: str = ""
     response_summary: str = ""
     failed_reason: str = ""
+    evidence: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -61,6 +62,7 @@ class RelistResult:
     screenshot_path: str = ""
     response_summary: str = ""
     failed_reason: str = ""
+    evidence_json: str = ""
 
 
 @dataclass(frozen=True)
@@ -77,6 +79,7 @@ class ListingJob:
     item_url: str
     screenshot_path: str
     response_summary: str
+    evidence_json: str
     failed_reason: str
     created_at: str
     updated_at: str

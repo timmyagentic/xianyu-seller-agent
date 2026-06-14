@@ -54,7 +54,7 @@
 | 目标库存字段 | `common/services/promotion_xianyu_publisher.py`、`promotion/backend/app/services/publish_rule_scheduler.py` | 已参考发布流程的 `stock` 字段，把重新上架目标库存保存为 `target_stock`，并通过 CLI、任务日志和可注入 API 边界传递；当前不会伪造平台库存修改成功 |
 | 上架后绑定发货内容 | `promotion/backend/app/services/publish_coupon_card_service.py` | 已改为 upsert 本地 `delivery_configs`，重新上架成功或已处于上架状态后绑定目标 `item_id` |
 
-MVP 重新上架的目标是“对一个已经发布过、仍能在商品管理中找到的商品执行重新上架”。当前实现已完成本地任务记录、真实状态刷新、归属校验、已上架幂等跳过、目标库存记录、API 结果解析边界、可配置 mtop 重新上架调用、授权 Playwright 执行器和发货配置绑定。发货后自动重新上架由 `AUTO_RELIST_ENABLED` 和商品级 `auto_relist_configs` 同时控制，并会复用运行中的 `XianyuApis` 先刷新当前状态。无论 mtop 还是 Playwright 路径，都必须记录前置状态、动作结果、目标库存、最终商品状态和截图或响应摘要；动作确认成功后会再尝试刷新单商品真实状态，并把执行后状态写入本地快照、`listing_jobs.final_status` 和响应摘要；遇到登录、滑块、验证码、风控、找不到按钮或缺少页面确认时只记录结构化失败，不绕过也不误报成功。
+MVP 重新上架的目标是“对一个已经发布过、仍能在商品管理中找到的商品执行重新上架”。当前实现已完成本地任务记录、真实状态刷新、归属校验、已上架幂等跳过、目标库存记录、API 结果解析边界、可配置 mtop 重新上架调用、授权 Playwright 执行器和发货配置绑定。发货后自动重新上架由 `AUTO_RELIST_ENABLED` 和商品级 `auto_relist_configs` 同时控制，并会复用运行中的 `XianyuApis` 先刷新当前状态。无论 mtop 还是 Playwright 路径，都必须记录前置状态、动作结果、目标库存、最终商品状态和截图或响应摘要；动作确认成功后会再尝试刷新单商品真实状态，并把执行请求、执行前状态、动作来源、Playwright 页面证据和执行后状态写入 `listing_jobs.evidence_json`，同时更新本地快照、`listing_jobs.final_status` 和响应摘要；遇到登录、滑块、验证码、风控、找不到按钮或缺少页面确认时只记录结构化失败，不绕过也不误报成功。
 
 暂不迁入：素材库后台、发布规则定时器、返佣选品、从本地草稿创建全新商品、发布删除规则、用户权限和管理页面。
 

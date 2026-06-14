@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 from services.delivery.store import DeliveryStore
 from services.listing.models import ItemSnapshot, RelistApiResult
@@ -246,6 +247,18 @@ def test_relist_success_refreshes_post_action_status_and_records_final_state(tmp
     assert job.previous_status == "inactive"
     assert job.final_status == "active"
     assert "post_action_status" in job.response_summary
+    evidence = json.loads(job.evidence_json)
+    assert evidence["request"] == {
+        "item_id": "item-1",
+        "expected_title": "",
+        "target_stock": 7,
+        "delivery_present": False,
+    }
+    assert evidence["pre_action"]["status"] == "inactive"
+    assert evidence["action"]["source"] == "api"
+    assert evidence["action"]["success"] is True
+    assert evidence["post_action"]["status"] == "active"
+    assert evidence["post_action"]["status_source"] == "published_list"
 
 
 def test_relist_uses_authorized_playwright_executor_when_api_is_unavailable(tmp_path):
@@ -300,6 +313,13 @@ def test_relist_records_playwright_risk_control_without_success(tmp_path):
     assert result.status == "playwright_required"
     assert result.failed_reason == "risk_control"
     assert "滑块" in result.response_summary
+    job = service.listing_store.list_jobs()[0]
+    evidence = json.loads(job.evidence_json)
+    assert evidence["request"]["item_id"] == "item-1"
+    assert evidence["pre_action"]["status"] == "inactive"
+    assert evidence["action"]["source"] == "playwright"
+    assert evidence["action"]["success"] is False
+    assert evidence["action"]["failed_reason"] == "risk_control"
 
 
 def test_relist_records_custom_playwright_required_reason_when_executor_is_not_confirmed(tmp_path):
