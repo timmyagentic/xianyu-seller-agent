@@ -13,6 +13,7 @@ RISK_CONTROL_KEYWORDS = ("滑块", "验证码", "captcha", "nc_1_n1z", "风控",
 LOGIN_KEYWORDS = ("请登录", "扫码登录", "login.taobao.com", "密码登录")
 PERMISSION_KEYWORDS = ("暂无权限", "无权限", "没有权限", "no-permission")
 SUCCESS_KEYWORDS = ("操作成功", "重新上架成功", "上架成功", "已上架", "在售")
+MANAGEMENT_KEYWORDS = ("商品管理", "在售", "下架", "卖掉了", "批量操作", "宝贝")
 STOCK_SELECTORS = (
     'input[placeholder*="库存"]',
     'input[aria-label*="库存"]',
@@ -285,6 +286,7 @@ class PlaywrightRelistExecutor:
             pass
 
         page_text = await self._body_text(page)
+        page_evidence = await self._page_evidence(page, page_text, request)
         risk_reason = await self._detect_blocker(page, page_text)
         if risk_reason:
             screenshot_path = await self._save_screenshot(page, request.item_id, f"preview-{risk_reason}")
@@ -293,6 +295,7 @@ class PlaywrightRelistExecutor:
                 "failed_reason": risk_reason,
                 "screenshot_path": screenshot_path,
                 "response_summary": self._blocker_summary(risk_reason),
+                "page_evidence": page_evidence,
             }
 
         title_matches = bool(request.expected_title and request.expected_title in page_text)
@@ -313,6 +316,7 @@ class PlaywrightRelistExecutor:
             "screenshot_path": screenshot_path,
             "failed_reason": "" if item_found and button_found else "preflight_not_actionable",
             "response_summary": "preview only; no click or stock fill executed",
+            "page_evidence": page_evidence,
         }
 
     async def _detect_blocker(self, page, page_text: str) -> str:
@@ -415,6 +419,52 @@ class PlaywrightRelistExecutor:
             return await page.text_content("body") or ""
         except Exception:
             return ""
+
+    async def _page_evidence(self, page, page_text: str, request: RelistRequest) -> dict:
+        """Return safe page diagnostics without exposing full page text."""
+        page_url = str(getattr(page, "url", "") or "")
+        title = ""
+        try:
+            title = str(await page.title() or "")
+        except Exception:
+            title = ""
+
+        lower_text = page_text.lower()
+        lower_url = page_url.lower()
+        markers: list[str] = []
+        if "seller-item" in lower_url:
+            markers.append("seller_item_route")
+        if any(keyword.lower() in lower_text or keyword.lower() in lower_url for keyword in LOGIN_KEYWORDS):
+            markers.append("login_text")
+        if any(keyword.lower() in lower_text or keyword.lower() in lower_url for keyword in PERMISSION_KEYWORDS):
+            markers.append("permission_text")
+        if any(keyword.lower() in lower_text for keyword in RISK_CONTROL_KEYWORDS):
+            markers.append("risk_control_text")
+        if any(keyword in page_text for keyword in MANAGEMENT_KEYWORDS):
+            markers.append("management_text")
+        if request.item_id and request.item_id in page_text:
+            markers.append("item_id_text")
+        if request.expected_title and request.expected_title in page_text:
+            markers.append("expected_title_text")
+        if any(keyword in page_text for keyword in ("重新上架", "恢复上架", "上架")):
+            markers.append("relist_text")
+
+        return {
+            "url": page_url[:300],
+            "title": title[:120],
+            "body_text_length": len(page_text),
+            "detected_markers": markers,
+            "element_counts": {
+                "input": await self._selector_count(page, "input"),
+                "button": await self._selector_count(page, "button"),
+            },
+        }
+
+    async def _selector_count(self, page, selector: str) -> int:
+        try:
+            return len(await page.query_selector_all(selector))
+        except Exception:
+            return 0
 
     async def _save_screenshot(self, page, item_id: str, suffix: str) -> str:
         if not self.screenshot_dir:

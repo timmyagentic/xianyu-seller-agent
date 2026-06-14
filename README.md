@@ -116,7 +116,7 @@ python main.py listing status
 
 `listing item-status` 会只读刷新单个商品的真实平台状态，并把脱敏后的状态摘要输出到终端，同时更新本地 `items` 快照。它会区分 `active`、`inactive`、`sold`、`relistable` 等状态，并保留平台原始状态码、状态文案、状态来源和 `can_relist` 判断，便于在执行重新上架前确认当前商品是不是旧快照误判。
 
-`listing relist-preflight` 会在不点击、不填库存、不写 `listing_jobs` 的前提下打开授权浏览器做页面预检：先刷新单商品真实状态，再检查商品管理页是否能看到目标商品和“重新上架/恢复上架/上架”入口。它用于真实执行前收集页面证据；遇到登录、滑块、验证码、风控、找不到商品或找不到按钮时只返回结构化失败。
+`listing relist-preflight` 会在不点击、不填库存、不写 `listing_jobs` 的前提下打开授权浏览器做页面预检：先刷新单商品真实状态，再检查商品管理页是否能看到目标商品和“重新上架/恢复上架/上架”入口。它用于真实执行前收集页面证据；遇到登录、滑块、验证码、风控、找不到商品或找不到按钮时只返回结构化失败。为便于排查页面不可执行原因，preflight 会输出安全的 `page_evidence`，包括当前 URL、页面标题、正文长度、命中的状态标记和 input/button 数量，但不会输出完整页面正文。
 
 `listing relist` 会在 `COOKIES_STR` 存在时先通过当前账号刷新商品真实状态：优先查询在售列表，未命中时再用商品详情接口兜底，避免本地旧快照把下架/售出商品误判为 `already_active`。如果配置了 `XIANYU_RELIST_API`，会按 `xianyu-auto-reply` 的 seller mtop 操作模式签名调用该接口；未配置或 API 失败时，默认记录 `manual_required`。只传 `--allow-playwright` 时不会点击页面，只会在任务中记录需要授权浏览器执行；只有同时传入 `--allow-playwright --confirm-real-relist`，CLI 才会创建真实 Playwright 执行器。
 
