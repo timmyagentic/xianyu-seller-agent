@@ -1,11 +1,13 @@
 import inspect
 import asyncio
 import json
+import time
 
 from main import XianyuLive
 from services.delivery.orders import OrderDetail
 from services.delivery.service import DeliveryService
 from services.delivery.store import DeliveryStore
+from services.messages import MessageDeduplicator, MessageParser
 from services.messages.models import IncomingMessage
 
 
@@ -109,3 +111,29 @@ def test_xianyu_live_uses_order_detail_quantity_for_data_inventory(tmp_path):
     assert sender.calls == [{"chat_id": "chat-1", "buyer_id": "buyer-1", "content": "KEY-A\nKEY-B"}]
     rows = store.list_inventory(config_id)
     assert [row.status for row in rows] == ["sent", "sent", "available"]
+
+
+def test_xianyu_live_handles_raw_paid_order_message_and_skips_duplicate(tmp_path):
+    store = DeliveryStore(db_path=str(tmp_path / "delivery.db"))
+    store.add_config(item_id="item-raw", name="文本", delivery_type="text", content="发货内容")
+    sender = FakeDeliverySender()
+    live = _live_with_delivery(store, sender)
+    live.message_parser = MessageParser(myid="seller-1")
+    live.message_deduplicator = MessageDeduplicator()
+    websocket = FakeWebSocket()
+    paid_message = {
+        "1": "buyer-raw@goofish",
+        "2": "chat-raw@goofish",
+        "3": {
+            "redReminder": "等待卖家发货",
+            "bizOrderId": "1234567890126",
+            "itemId": "item-raw",
+        },
+        "5": int(time.time() * 1000),
+    }
+
+    asyncio.run(live.handle_message(paid_message, websocket))
+    asyncio.run(live.handle_message(paid_message, websocket))
+
+    assert sender.calls == [{"chat_id": "chat-raw", "buyer_id": "buyer-raw", "content": "发货内容"}]
+    assert store.has_sent_order("1234567890126") is True
