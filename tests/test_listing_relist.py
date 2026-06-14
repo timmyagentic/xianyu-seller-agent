@@ -47,6 +47,19 @@ def test_relist_validates_item_belongs_to_current_account(tmp_path):
     assert service.listing_store.list_jobs()[0].result_status == "item_not_found"
 
 
+def test_relist_with_fresh_database_records_item_not_found(tmp_path):
+    db_path = str(tmp_path / "fresh.db")
+    service = RelistService(
+        listing_store=ListingStore(db_path=db_path),
+        delivery_store=DeliveryStore(db_path=db_path),
+    )
+
+    result = asyncio.run(service.relist(load_relist_request({"item_id": "item-1"})))
+
+    assert result.status == "item_not_found"
+    assert service.listing_store.list_jobs()[0].result_status == "item_not_found"
+
+
 def test_already_active_item_skips_platform_action_and_binds_delivery_config(tmp_path):
     item = ItemSnapshot(item_id="item-1", title="资料包", status="active", item_url="https://goofish/item-1")
     service = _service(tmp_path, item=item)

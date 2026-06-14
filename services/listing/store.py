@@ -14,6 +14,17 @@ def initialize_listing_schema(db_path: str) -> None:
     with sqlite3.connect(db_path) as conn:
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS items (
+                item_id TEXT PRIMARY KEY,
+                data TEXT NOT NULL,
+                price REAL,
+                description TEXT,
+                last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS listing_jobs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 task_type TEXT NOT NULL,
