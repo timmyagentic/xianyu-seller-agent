@@ -2,6 +2,7 @@ import time
 import os
 import re
 import sys
+import json
 
 import requests
 from loguru import logger
@@ -324,3 +325,63 @@ class XianyuApis:
             logger.error(f"商品信息API请求异常: {str(e)}")
             time.sleep(0.5)
             return self.get_item_info(item_id, retry_count + 1)
+
+    def get_order_detail(self, order_id, retry_count=0):
+        """获取订单详情，供自动发货补全购买数量和规格信息。"""
+        if retry_count >= 3:
+            logger.error("获取订单详情失败，重试次数过多")
+            return {"error": "获取订单详情失败，重试次数过多"}
+
+        timestamp = str(int(time.time()) * 1000)
+        data_val = json.dumps({"tid": str(order_id)}, separators=(",", ":"))
+        token = self.session.cookies.get('_m_h5_tk', '').split('_')[0]
+        sign = generate_sign(timestamp, token, data_val)
+        params = {
+            'jsv': '2.7.2',
+            'appKey': '34839810',
+            't': timestamp,
+            'sign': sign,
+            'v': '1.0',
+            'type': 'originaljson',
+            'accountSite': 'xianyu',
+            'dataType': 'json',
+            'timeout': '20000',
+            'api': 'mtop.idle.web.trade.order.detail',
+            'sessionOption': 'AutoLoginOnly',
+            'spm_cnt': 'a21ybx.order-detail.0.0',
+        }
+        data = {'data': data_val}
+        headers = {
+            'accept': 'application/json',
+            'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'content-type': 'application/x-www-form-urlencoded',
+            'origin': 'https://www.goofish.com',
+            'referer': 'https://www.goofish.com/',
+        }
+
+        try:
+            response = self.session.post(
+                'https://h5api.m.goofish.com/h5/mtop.idle.web.trade.order.detail/1.0/',
+                params=params,
+                data=data,
+                headers=headers,
+            )
+            res_json = response.json()
+            if isinstance(res_json, dict):
+                ret_value = res_json.get('ret', [])
+                if not any('SUCCESS' in ret for ret in ret_value):
+                    logger.warning(f"订单详情API调用失败，错误信息: {ret_value}")
+                    if 'Set-Cookie' in response.headers:
+                        logger.debug("检测到Set-Cookie，更新cookie")
+                        self.clear_duplicate_cookies()
+                    time.sleep(0.5)
+                    return self.get_order_detail(order_id, retry_count + 1)
+                logger.debug(f"订单详情获取成功: {order_id}")
+                return res_json
+
+            logger.error(f"订单详情API返回格式异常: {res_json}")
+            return self.get_order_detail(order_id, retry_count + 1)
+        except Exception as e:
+            logger.error(f"订单详情API请求异常: {str(e)}")
+            time.sleep(0.5)
+            return self.get_order_detail(order_id, retry_count + 1)
