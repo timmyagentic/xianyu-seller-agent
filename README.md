@@ -139,8 +139,8 @@ Playwright 路径会参考 `xianyu-auto-reply` 的页面初始化策略：先访
 - `MODEL_BASE_URL=https://api-inference.modelscope.cn/v1` 与 `MODEL_NAME=deepseek-ai/DeepSeek-V4-Pro`：默认使用 ModelScope 的 OpenAI 兼容接口；真实 `API_KEY` 只写入本地 `.env`。
 - `LLM_ENABLE_SEARCH=false`：默认不发送供应商特定的联网搜索扩展参数。
 - `COOKIE_REFRESH_ENABLED=true`：默认每 10 分钟调用登录态续期接口合并 Set-Cookie，减少 `_m_h5_tk` 令牌过期导致的掉线；Session 过期、滑块或风控仍需人工重新登录。
-- `AUTO_REPLY_ENABLED=true`：控制普通买家聊天是否进入 LLM 自动回复；付款完成消息仍由 `AUTO_DELIVERY_ENABLED` 单独控制。
-- `AUTO_DELIVERY_ENABLED=false`：自动发货默认关闭。确认商品发货配置、库存和测试订单后，才在本地 `.env` 改成 `true`。
+- `AUTO_REPLY_ENABLED=true`：控制普通买家聊天是否进入 LLM 自动回复；这是全局总闸，实际只会回复本地已配置自动化的商品。付款完成消息仍由 `AUTO_DELIVERY_ENABLED` 单独控制。
+- `AUTO_DELIVERY_ENABLED=false`：自动发货默认关闭。确认商品发货配置、库存和测试订单后，才在本地 `.env` 改成 `true`；即使总闸开启，没有启用发货配置的商品也不会自动发货。
 - `AUTO_CONFIRM_DELIVERY_ENABLED=false`：闲鱼订单侧自动确认发货默认关闭。开启后，程序会在预设发货内容发送成功后调用闲鱼无物流确认发货接口；如果平台返回已发货，也按成功处理。
 - `AUTO_RELIST_ENABLED=false`：发货后自动重新上架默认关闭；即使商品已配置 `listing auto-relist set`，未打开该开关也不会触发。
 - `XIANYU_RELIST_API=`：可选的真实重新上架 mtop API 名称。没有稳定接口证据时保持为空；代码只提供签名调用边界，不硬编码未知接口。
@@ -151,7 +151,9 @@ Playwright 路径会参考 `xianyu-auto-reply` 的页面初始化策略：先访
 - `AUTO_PUBLISH_SCREENSHOT_DIR=data/publish-screenshots`：发布新商品浏览器路径保存页面证据的本地目录，默认不提交。
 - `AUTO_PUBLISH_PLAYWRIGHT_HEADLESS=true`：发布新商品浏览器执行器是否无头运行；也兼容旧的 `PLAYWRIGHT_HEADLESS`。
 
-启用自动发货后，程序会监听“我已付款，等待你发货”“等待卖家发货”等付款完成消息，解析订单号、商品 ID、买家和会话，再按商品配置发货。同一订单已经写入 `sent` 日志后会跳过重复发送；如果 `AUTO_CONFIRM_DELIVERY_ENABLED=true` 且该订单尚无 `platform_confirmed` 或 `platform_already_delivered` 日志，程序会继续尝试在闲鱼订单侧确认无物流发货。`data` 库存会按订单购买数量先预占，发送成功后标记 `sent`，发送失败时保留为 `failed_retryable` 以便同一订单重试继续使用原 key。发货内容发送成功但平台确认发货失败时，结果会记录为 `sent_confirm_failed` 和 `platform_confirm_failed`，不会重复发送内容，也不会触发发货后自动重新上架；下次遇到同一订单付款消息时会只重试平台确认。发货成功后，如果同时开启 `AUTO_RELIST_ENABLED=true` 且该商品存在启用的 `auto-relist` 配置，程序会创建重新上架任务并记录目标库存；带目标库存的重新上架请求即使商品状态显示为 `active`，也会继续执行补库存/重新上架动作，不会用 `already_active` 早退。当 `AUTO_CONFIRM_DELIVERY_ENABLED=true` 时，平台确认失败会阻止这一步。如果允许 Playwright 但没有设置 `AUTO_RELIST_CONFIRM_PLAYWRIGHT=true`，任务会停在需要授权浏览器执行的结构化结果，不会点击页面；失败只影响重新上架任务日志，不回滚已发货结果。
+普通聊天自动回复只对已配置商品生效：商品必须存在启用的发货配置，或存在启用的自动重新上架配置；未配置商品不会获取商品详情、不会进入 LLM，也不会发送自动回复。
+
+启用自动发货后，程序会监听“我已付款，等待你发货”“等待卖家发货”等付款完成消息，解析订单号、商品 ID、买家和会话，再按商品配置发货。未配置启用发货内容的商品会直接跳过，不会拉取订单详情或发送任何内容。同一订单已经写入 `sent` 日志后会跳过重复发送；如果 `AUTO_CONFIRM_DELIVERY_ENABLED=true` 且该订单尚无 `platform_confirmed` 或 `platform_already_delivered` 日志，程序会继续尝试在闲鱼订单侧确认无物流发货。`data` 库存会按订单购买数量先预占，发送成功后标记 `sent`，发送失败时保留为 `failed_retryable` 以便同一订单重试继续使用原 key。发货内容发送成功但平台确认发货失败时，结果会记录为 `sent_confirm_failed` 和 `platform_confirm_failed`，不会重复发送内容，也不会触发发货后自动重新上架；下次遇到同一订单付款消息时会只重试平台确认。发货成功后，如果同时开启 `AUTO_RELIST_ENABLED=true` 且该商品存在启用的 `auto-relist` 配置，程序会创建重新上架任务并记录目标库存；带目标库存的重新上架请求即使商品状态显示为 `active`，也会继续执行补库存/重新上架动作，不会用 `already_active` 早退。当 `AUTO_CONFIRM_DELIVERY_ENABLED=true` 时，平台确认失败会阻止这一步。如果允许 Playwright 但没有设置 `AUTO_RELIST_CONFIRM_PLAYWRIGHT=true`，任务会停在需要授权浏览器执行的结构化结果，不会点击页面；失败只影响重新上架任务日志，不回滚已发货结果。
 
 遇到 Cookie 失效、滑块、风控、账号归属不清或真实交易风险时，程序应记录原因并交给人工处理，不实现绕过逻辑。
 

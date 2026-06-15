@@ -152,6 +152,75 @@ def test_xianyu_live_skips_chat_reply_when_auto_reply_disabled():
     assert websocket.sent == []
 
 
+def test_xianyu_live_skips_chat_reply_for_unconfigured_item(tmp_path):
+    live = XianyuLive.__new__(XianyuLive)
+    live.auto_reply_enabled = True
+    live.delivery_store = DeliveryStore(db_path=str(tmp_path / "app.db"))
+    live.listing_store = None
+    live.reply_bot = FakeReplyBot()
+    websocket = FakeWebSocket()
+    incoming = IncomingMessage(
+        chat_id="chat-1",
+        item_id="item-unconfigured",
+        sender_id="buyer-1",
+        sender_name="买家",
+        text="你好",
+        message_id="msg-chat-1",
+        message_time=1781430000000,
+        raw={},
+        is_from_self=False,
+        kind="chat",
+    )
+
+    asyncio.run(live.handle_incoming_message(incoming, websocket))
+
+    assert live.reply_bot.calls == []
+    assert websocket.sent == []
+
+
+def test_xianyu_live_allows_chat_reply_for_configured_item(tmp_path):
+    live = XianyuLive.__new__(XianyuLive)
+    live.auto_reply_enabled = True
+    live.myid = "seller-1"
+    live.manual_mode_conversations = set()
+    live.manual_mode_timestamps = {}
+    live.manual_mode_timeout = 3600
+    live.simulate_human_typing = False
+    live.delivery_store = DeliveryStore(db_path=str(tmp_path / "app.db"))
+    live.delivery_store.add_config(item_id="item-1", name="文本", delivery_type="text", content="发货内容")
+    live.listing_store = None
+    live.reply_bot = FakeReplyBot()
+    live.context_manager = type(
+        "FakeContextManager",
+        (),
+        {
+            "get_item_info": lambda self, item_id: {"title": "资料包", "soldPrice": 990, "quantity": 1, "skuList": []},
+            "get_context_by_chat": lambda self, chat_id: [],
+            "add_message_by_chat": lambda self, *args: None,
+            "increment_bargain_count_by_chat": lambda self, chat_id: None,
+            "get_bargain_count_by_chat": lambda self, chat_id: 0,
+        },
+    )()
+    websocket = FakeWebSocket()
+    incoming = IncomingMessage(
+        chat_id="chat-1",
+        item_id="item-1",
+        sender_id="buyer-1",
+        sender_name="买家",
+        text="你好",
+        message_id="msg-chat-1",
+        message_time=1781430000000,
+        raw={},
+        is_from_self=False,
+        kind="chat",
+    )
+
+    asyncio.run(live.handle_incoming_message(incoming, websocket))
+
+    assert len(live.reply_bot.calls) == 1
+    assert any(payload["lwp"] == "/r/MessageStatus/read" for payload in websocket.sent)
+
+
 def _paid_order_message():
     return IncomingMessage(
         chat_id="chat-1",
@@ -201,6 +270,20 @@ def test_xianyu_live_delivers_paid_order_message_once(tmp_path):
         "/r/Conversation/clearRedPoint",
         "/r/MessageStatus/read",
     ]
+
+
+def test_xianyu_live_skips_paid_order_for_unconfigured_item(tmp_path):
+    store = DeliveryStore(db_path=str(tmp_path / "delivery.db"))
+    sender = FakeDeliverySender()
+    live = _live_with_delivery(store, sender)
+    live.order_detail_provider = lambda order_id: (_ for _ in ()).throw(AssertionError("should not fetch order detail"))
+    websocket = FakeWebSocket()
+
+    result = asyncio.run(live.handle_paid_order_message(_paid_order_message(), websocket))
+
+    assert result is None
+    assert sender.calls == []
+    assert websocket.sent == []
 
 
 class FailingConfirmDelivery:

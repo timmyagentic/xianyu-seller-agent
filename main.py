@@ -107,6 +107,35 @@ class XianyuLive:
             self.cookies = trans_cookies(cookie_string)
         return cookie_string
 
+    def has_enabled_delivery_config(self, item_id: str) -> bool:
+        store = getattr(self, "delivery_store", None)
+        if store is None:
+            delivery_service = getattr(self, "delivery_service", None)
+            store = getattr(delivery_service, "store", None)
+        if store is None:
+            return False
+        try:
+            return store.get_enabled_config(str(item_id)) is not None
+        except Exception as exc:
+            logger.error(f"检查商品发货配置失败: item_id={item_id}, error={exc}")
+            return False
+
+    def has_enabled_auto_relist_config(self, item_id: str) -> bool:
+        store = getattr(self, "listing_store", None)
+        if store is None:
+            return False
+        try:
+            return store.get_enabled_auto_relist_config(str(item_id)) is not None
+        except Exception as exc:
+            logger.error(f"检查商品自动上架配置失败: item_id={item_id}, error={exc}")
+            return False
+
+    def is_item_configured_for_automation(self, item_id: str) -> bool:
+        """Only configured items are allowed to enter automatic workflows."""
+        if not item_id:
+            return False
+        return self.has_enabled_delivery_config(item_id) or self.has_enabled_auto_relist_config(item_id)
+
     async def refresh_token(self):
         """刷新token"""
         try:
@@ -539,6 +568,9 @@ class XianyuLive:
         if not item_id:
             logger.warning("无法获取商品ID")
             return
+        if not self.is_item_configured_for_automation(item_id):
+            logger.info(f"商品 {item_id} 未配置自动化，跳过自动回复")
+            return
 
         # 检查是否为卖家（自己）发送的控制命令
         if incoming.is_from_self:
@@ -646,6 +678,9 @@ class XianyuLive:
             return None
         if not incoming.chat_id or not incoming.sender_id:
             logger.warning(f"订单 {incoming.order_id} 缺少会话或买家ID，跳过自动发货")
+            return None
+        if not self.has_enabled_delivery_config(incoming.item_id):
+            logger.info(f"商品 {incoming.item_id} 未配置自动发货，跳过订单 {incoming.order_id}")
             return None
 
         detail = await self._load_order_detail_for_delivery(incoming.order_id)
