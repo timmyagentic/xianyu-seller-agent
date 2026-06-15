@@ -40,15 +40,20 @@ class FakePage:
         body_text,
         risk_control=False,
         confirm_after_click=True,
-        url="https://seller.goofish.com/#/seller-item",
-        title="闲鱼管理系统",
+        url="https://www.goofish.com/publish?itemId=item-1&editScene=rePutOn",
+        title="发闲置_闲鱼",
+        rendered_body_text=None,
+        form_rendered=True,
     ):
         self.body_text = body_text
+        self.rendered_body_text = rendered_body_text or body_text
+        self.form_rendered = form_rendered
         self.risk_control = risk_control
         self.confirm_after_click = confirm_after_click
         self.url = url
         self.title_text = title
         self.goto_urls = []
+        self.waited_selectors = []
         self.stock_input = FakeElement()
         self.relist_button = FakeElement(on_click=self._after_relist_click)
 
@@ -60,6 +65,14 @@ class FakePage:
         self.goto_urls.append(url)
 
     async def wait_for_load_state(self, *args, **kwargs):
+        return None
+
+    async def wait_for_selector(self, selector, **kwargs):
+        self.waited_selectors.append(selector)
+        if selector == "input, button, textarea":
+            self.form_rendered = True
+            self.body_text = self.rendered_body_text
+            return self.stock_input
         return None
 
     async def wait_for_timeout(self, *args, **kwargs):
@@ -74,6 +87,8 @@ class FakePage:
         return ""
 
     async def query_selector_all(self, selector):
+        if not self.form_rendered:
+            return []
         if selector == "input":
             return [self.stock_input]
         if selector == "button":
@@ -83,11 +98,17 @@ class FakePage:
     async def query_selector(self, selector):
         if self.risk_control and any(key in selector for key in (".nc-container", "#nc_1_n1z", ".captcha")):
             return FakeElement()
+        if not self.form_rendered:
+            return None
         if any(key in selector for key in ("库存", "数量", "stock", "inventory")):
             return self.stock_input
-        if "重新上架" in selector or "恢复上架" in selector or "上架" in selector:
+        if "重新上架" in selector or "恢复上架" in selector or "上架" in selector or "发布" in selector or "submit" in selector:
             return self.relist_button
         return None
+
+
+def _expected_relist_url(item_id="item-1"):
+    return SELLER_MANAGEMENT_URL.format(item_id=item_id)
 
 
 def test_playwright_executor_stops_on_risk_control():
@@ -121,7 +142,7 @@ def test_playwright_executor_fills_stock_and_returns_success_after_page_confirma
     assert "操作成功" in result.response_summary
     assert result.evidence["executor"] == "playwright"
     assert result.evidence["warmup_urls"] == [SELLER_HOME_URL, LOGIN_CONTEXT_URL, SELLER_MANAGEMENT_URL]
-    assert page.goto_urls == [SELLER_HOME_URL, LOGIN_CONTEXT_URL, SELLER_MANAGEMENT_URL]
+    assert page.goto_urls == [SELLER_HOME_URL, LOGIN_CONTEXT_URL, _expected_relist_url()]
     assert result.evidence["pre_action_page"]["element_counts"]["input"] == 1
     assert result.evidence["post_action_page"]["body_text_length"] >= result.evidence["pre_action_page"]["body_text_length"]
 
@@ -153,16 +174,36 @@ def test_playwright_preview_detects_item_and_button_without_clicking_or_filling_
 
     assert result["success"] is True
     assert result["warmup_urls"] == [SELLER_HOME_URL, LOGIN_CONTEXT_URL, SELLER_MANAGEMENT_URL]
-    assert page.goto_urls == [SELLER_HOME_URL, LOGIN_CONTEXT_URL, SELLER_MANAGEMENT_URL]
+    assert page.goto_urls == [SELLER_HOME_URL, LOGIN_CONTEXT_URL, _expected_relist_url()]
     assert result["item_found"] is True
     assert result["relist_button_found"] is True
+    assert result["publish_button_found"] is True
     assert result["would_fill_stock"] == 7
     assert page.relist_button.clicked is False
     assert page.stock_input.filled_values == []
 
 
+def test_playwright_preview_waits_for_reputon_publish_form_render():
+    page = FakePage(
+        body_text="发闲置",
+        rendered_body_text="item-1 资料包 发闲置 宝贝图片 宝贝描述 价格 发布",
+        form_rendered=False,
+    )
+    executor = PlaywrightRelistExecutor(
+        cookies_str="unb=seller-1; _m_h5_tk=token_123",
+        page_provider=lambda: page,
+    )
+
+    result = asyncio.run(executor.preview(RelistRequest(item_id="item-1", expected_title="资料包")))
+
+    assert result["success"] is True
+    assert page.waited_selectors == ["input, button, textarea"]
+    assert result["page_evidence"]["element_counts"]["input"] == 1
+    assert result["page_evidence"]["element_counts"]["button"] == 1
+
+
 def test_playwright_preview_reports_safe_page_evidence_when_not_actionable():
-    page = FakePage(body_text="商品管理 在售 下架 批量操作", url="https://seller.goofish.com/?site=COMMONPRO#/seller-item")
+    page = FakePage(body_text="发闲置 宝贝图片 宝贝描述 价格 发布")
     executor = PlaywrightRelistExecutor(
         cookies_str="unb=seller-1; _m_h5_tk=token_123",
         page_provider=lambda: page,
@@ -173,10 +214,11 @@ def test_playwright_preview_reports_safe_page_evidence_when_not_actionable():
     assert result["success"] is False
     assert result["failed_reason"] == "preflight_not_actionable"
     assert "page_evidence" in result
-    assert result["page_evidence"]["url"] == "https://seller.goofish.com/?site=COMMONPRO#/seller-item"
-    assert result["page_evidence"]["title"] == "闲鱼管理系统"
+    assert result["page_evidence"]["url"] == "https://www.goofish.com/publish?itemId=item-1&editScene=rePutOn"
+    assert result["page_evidence"]["title"] == "发闲置_闲鱼"
     assert result["page_evidence"]["body_text_length"] == len(page.body_text)
     assert "management_text" in result["page_evidence"]["detected_markers"]
+    assert "publish_text" in result["page_evidence"]["detected_markers"]
     assert result["page_evidence"]["element_counts"]["input"] == 1
     assert result["page_evidence"]["element_counts"]["button"] == 1
     assert "body_text" not in result["page_evidence"]
@@ -196,6 +238,20 @@ def test_playwright_preview_stops_on_risk_control_without_clicking():
     assert result["success"] is False
     assert result["failed_reason"] == "risk_control"
     assert "滑块" in result["response_summary"]
+    assert page.relist_button.clicked is False
+
+
+def test_playwright_preview_treats_illegal_access_page_as_risk_control():
+    page = FakePage(body_text="非法访问 为了保障您的体验，请使用正常浏览器访问闲鱼")
+    executor = PlaywrightRelistExecutor(
+        cookies_str="unb=seller-1; _m_h5_tk=token_123",
+        page_provider=lambda: page,
+    )
+
+    result = asyncio.run(executor.preview(RelistRequest(item_id="item-1", expected_title="资料包")))
+
+    assert result["success"] is False
+    assert result["failed_reason"] == "risk_control"
     assert page.relist_button.clicked is False
 
 

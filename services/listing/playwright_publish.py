@@ -4,14 +4,30 @@ from pathlib import Path
 from typing import Callable
 
 from .models import PublishRequest, PublishResult
+from .playwright_browser_options import (
+    ANTI_DETECTION_INIT_SCRIPT,
+    build_browser_context_options,
+    build_browser_launch_options,
+)
 
 
-SELLER_HOME_URL = "https://seller.goofish.com"
+SELLER_HOME_URL = "https://www.goofish.com"
 LOGIN_CONTEXT_URL = "https://login.taobao.com/member/login.jhtml"
-PROMOTION_PUBLISH_URL = "https://seller.goofish.com/?site=COMMONPRO&spm=a21107h.42826273.0.0#/seller-item/publish"
+PROMOTION_PUBLISH_URL = "https://www.goofish.com/publish?spm=a21ybx.item.sidebar.1.297e3da6aDZAmV"
 COOKIE_DOMAINS = (".goofish.com", ".taobao.com", ".alipay.com")
 RISK_CONTROL_SELECTORS = (".nc-container", "#nc_1_n1z", ".captcha-container", ".nc_scale")
-RISK_CONTROL_KEYWORDS = ("滑块", "验证码", "captcha", "nc_1_n1z", "风控", "请拖动", "请按住")
+RISK_CONTROL_KEYWORDS = (
+    "滑块",
+    "验证码",
+    "captcha",
+    "nc_1_n1z",
+    "风控",
+    "请拖动",
+    "请按住",
+    "非法访问",
+    "正常浏览器",
+    "保障您的体验",
+)
 LOGIN_KEYWORDS = ("请登录", "扫码登录", "login.taobao.com", "密码登录")
 PERMISSION_KEYWORDS = ("暂无权限", "无权限", "没有权限", "no-permission")
 SUCCESS_KEYWORDS = ("发布成功", "已发布", "上架成功", "成功")
@@ -65,10 +81,10 @@ PUBLISH_BUTTON_SELECTORS = (
 
 
 class PlaywrightPublishExecutor:
-    """Publish a new seller item through the Goofish seller page.
+    """Publish a new item through the regular Goofish publish page.
 
     This intentionally follows the reference project's page warm-up sequence:
-    seller home -> Taobao login page -> seller publish page. It stops on login,
+    Goofish home -> Taobao login page -> publish page. It stops on login,
     slider, captcha, permission, or missing platform confirmation.
     """
 
@@ -119,10 +135,11 @@ class PlaywrightPublishExecutor:
         context = None
         try:
             playwright = await async_playwright().start()
-            browser = await playwright.chromium.launch(headless=self.headless)
-            context = await browser.new_context()
+            browser = await playwright.chromium.launch(**build_browser_launch_options(headless=self.headless))
+            context = await browser.new_context(**build_browser_context_options())
             await context.add_cookies(self._build_cookie_payload())
             page = await context.new_page()
+            await self._add_anti_detection_script(page)
             return await self._execute_on_page(page, request)
         except Exception as exc:
             return PublishResult(
@@ -231,6 +248,7 @@ class PlaywrightPublishExecutor:
         await self._wait(page, 1000)
         await page.goto(self.publish_url, wait_until="networkidle", timeout=max(self.timeout_ms, 60000))
         await self._wait(page, 3000)
+        await self._wait_for_publish_form(page)
 
     def _validate_request(self, request: PublishRequest) -> str:
         if not request.title.strip():
@@ -348,7 +366,7 @@ class PlaywrightPublishExecutor:
         lower_url = page_url.lower()
         lower_text = page_text.lower()
         markers = []
-        if "seller-item/publish" in lower_url:
+        if "seller-item/publish" in lower_url or "/publish" in lower_url:
             markers.append("publish_route")
         if any(keyword.lower() in lower_text or keyword.lower() in lower_url for keyword in LOGIN_KEYWORDS):
             markers.append("login_text")
@@ -366,6 +384,19 @@ class PlaywrightPublishExecutor:
         except Exception:
             return 0
 
+    async def _wait_for_publish_form(self, page) -> None:
+        element_count = (
+            await self._selector_count(page, "input")
+            + await self._selector_count(page, "button")
+            + await self._selector_count(page, "textarea")
+        )
+        if element_count > 0:
+            return
+        try:
+            await page.wait_for_selector("input, button, textarea", timeout=max(self.timeout_ms, 30000))
+        except Exception:
+            pass
+
     async def _save_screenshot(self, page, item_id: str, suffix: str) -> str:
         if not self.screenshot_dir:
             return ""
@@ -381,6 +412,12 @@ class PlaywrightPublishExecutor:
     async def _wait(self, page, ms: int) -> None:
         try:
             await page.wait_for_timeout(ms)
+        except Exception:
+            pass
+
+    async def _add_anti_detection_script(self, page) -> None:
+        try:
+            await page.add_init_script(ANTI_DETECTION_INIT_SCRIPT)
         except Exception:
             pass
 

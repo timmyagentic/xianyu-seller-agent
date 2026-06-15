@@ -47,8 +47,12 @@ class FakePublishPage:
         risk_control=False,
         permission_required=False,
         confirm_after_click=True,
+        rendered_body_text=None,
+        form_rendered=True,
     ):
         self.body_text = body_text
+        self.rendered_body_text = rendered_body_text or body_text
+        self.form_rendered = form_rendered
         self.url = url
         self.title_text = title
         self.risk_control = risk_control
@@ -56,6 +60,7 @@ class FakePublishPage:
         self.confirm_after_click = confirm_after_click
         self.goto_urls = []
         self.waits = []
+        self.waited_selectors = []
         self.title_input = FakeElement()
         self.description_input = FakeElement()
         self.price_input = FakeElement()
@@ -71,12 +76,20 @@ class FakePublishPage:
     async def goto(self, url, **kwargs):
         self.goto_urls.append(url)
         self.url = url
-        if self.permission_required and "seller-item/publish" in url:
-            self.url = "https://seller.goofish.com/?site=COMMONPRO#/no-permission?redirectUrl=x"
+        if self.permission_required and "publish" in url:
+            self.url = "https://www.goofish.com/no-permission?redirectUrl=x"
             self.body_text = "暂无权限"
 
     async def wait_for_timeout(self, ms):
         self.waits.append(ms)
+
+    async def wait_for_selector(self, selector, **kwargs):
+        self.waited_selectors.append(selector)
+        if selector == "input, button, textarea":
+            self.form_rendered = True
+            self.body_text = self.rendered_body_text
+            return self.title_input
+        return None
 
     async def title(self):
         return self.title_text
@@ -87,6 +100,8 @@ class FakePublishPage:
         return ""
 
     async def query_selector_all(self, selector):
+        if not self.form_rendered:
+            return []
         if selector == "input":
             return [self.title_input, self.price_input, self.stock_input, self.image_input]
         if selector == "button":
@@ -96,6 +111,8 @@ class FakePublishPage:
     async def query_selector(self, selector):
         if self.risk_control and any(key in selector for key in (".nc-container", "#nc_1_n1z", ".captcha")):
             return FakeElement()
+        if not self.form_rendered:
+            return None
         if "type=\"file\"" in selector or "accept*=\"image\"" in selector:
             return self.image_input
         if any(key in selector for key in ("标题", "title")):
@@ -142,6 +159,24 @@ def test_publish_executor_warms_login_context_before_publish_page():
     assert result.evidence["warmup_urls"] == [SELLER_HOME_URL, LOGIN_CONTEXT_URL, PROMOTION_PUBLISH_URL]
 
 
+def test_publish_executor_waits_for_publish_form_render():
+    page = FakePublishPage(
+        body_text="发闲置",
+        rendered_body_text="发闲置 标题 描述 价格 库存 发布",
+        form_rendered=False,
+    )
+    executor = PlaywrightPublishExecutor(
+        cookies_str="unb=seller-1; _m_h5_tk=token_123",
+        page_provider=lambda: page,
+    )
+
+    result = asyncio.run(executor.publish(_request()))
+
+    assert result.success is True
+    assert page.waited_selectors == ["input, button, textarea"]
+    assert page.title_input.filled_values[-1] == "智谱 GLM coding plan"
+
+
 def test_publish_executor_stops_on_no_permission_after_warmup():
     page = FakePublishPage(permission_required=True)
     executor = PlaywrightPublishExecutor(
@@ -154,6 +189,20 @@ def test_publish_executor_stops_on_no_permission_after_warmup():
     assert result.success is False
     assert result.failed_reason == "permission_required"
     assert page.goto_urls == [SELLER_HOME_URL, LOGIN_CONTEXT_URL, PROMOTION_PUBLISH_URL]
+    assert page.publish_button.clicked is False
+
+
+def test_publish_executor_treats_illegal_access_page_as_risk_control():
+    page = FakePublishPage(body_text="非法访问 为了保障您的体验，请使用正常浏览器访问闲鱼")
+    executor = PlaywrightPublishExecutor(
+        cookies_str="unb=seller-1; _m_h5_tk=token_123",
+        page_provider=lambda: page,
+    )
+
+    result = asyncio.run(executor.publish(_request()))
+
+    assert result.success is False
+    assert result.failed_reason == "risk_control"
     assert page.publish_button.clicked is False
 
 

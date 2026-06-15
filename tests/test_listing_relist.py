@@ -392,7 +392,8 @@ def test_playwright_fallback_command_is_constructed_without_running_browser():
 
     assert command.item_id == "item-1"
     assert command.expected_title == "资料包"
-    assert "seller.goofish.com" in command.management_url
+    assert "www.goofish.com/publish" in command.management_url
+    assert "editScene=rePutOn" in command.management_url
     assert command.cookie_domains == (
         ".goofish.com",
         ".taobao.com",

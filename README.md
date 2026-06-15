@@ -118,15 +118,15 @@ python main.py listing status
 
 `listing item-status` 会只读刷新单个商品的真实平台状态，并把脱敏后的状态摘要输出到终端，同时更新本地 `items` 快照。它会区分 `active`、`inactive`、`sold`、`relistable` 等状态，并保留平台原始状态码、状态文案、状态来源和 `can_relist` 判断，便于在执行重新上架前确认当前商品是不是旧快照误判。
 
-`listing relist-preflight` 会在不点击、不填库存、不写 `listing_jobs` 的前提下打开授权浏览器做页面预检：先刷新单商品真实状态，再检查商品管理页是否能看到目标商品和“重新上架/恢复上架/上架”入口。它用于真实执行前收集页面证据；遇到登录、滑块、验证码、风控、找不到商品或找不到按钮时只返回结构化失败。为便于排查页面不可执行原因，preflight 会输出安全的 `page_evidence`，包括当前 URL、页面标题、正文长度、命中的状态标记和 input/button 数量，但不会输出完整页面正文。
+`listing relist-preflight` 会在不点击、不填库存、不写 `listing_jobs` 的前提下打开授权浏览器做页面预检：先刷新单商品真实状态，再进入普通发布页的重新发布路由 `https://www.goofish.com/publish?itemId=...&editScene=rePutOn`，检查页面是否能看到目标商品和发布入口。它用于真实执行前收集页面证据；遇到登录、滑块、验证码、风控、找不到商品或找不到按钮时只返回结构化失败。为便于排查页面不可执行原因，preflight 会输出安全的 `page_evidence`，包括当前 URL、页面标题、正文长度、命中的状态标记和 input/button 数量，但不会输出完整页面正文。
 
 `listing relist` 会在 `COOKIES_STR` 存在时先通过当前账号刷新商品真实状态：优先查询在售列表，未命中时再用商品详情接口兜底，避免本地旧快照把下架/售出商品误判为 `already_active`。如果配置了 `XIANYU_RELIST_API`，会按 `xianyu-auto-reply` 的 seller mtop 操作模式签名调用该接口；未配置或 API 失败时，默认记录 `manual_required`。只传 `--allow-playwright` 时不会点击页面，只会在任务中记录需要授权浏览器执行；只有同时传入 `--allow-playwright --confirm-real-relist`，CLI 才会创建真实 Playwright 执行器。
 
-授权 Playwright 执行器只处理“商品管理页已有目标商品并出现重新上架入口”的场景：它会设置目标库存、点击“重新上架/恢复上架/上架”，并且只有页面出现“操作成功/上架成功/已上架/在售”等确认文本后才记录 `relisted`。如果检测到登录页、滑块、验证码、风控提示、找不到目标商品、找不到按钮或点击后没有确认结果，会记录 `playwright_required` 和失败原因，必要时保存截图到 `AUTO_RELIST_SCREENSHOT_DIR`，不会伪造成功。`--stock` 会作为目标库存写入任务，并传递给 mtop API 或授权浏览器执行器。mtop API 或 Playwright 确认成功后，服务会再尝试刷新一次单商品真实状态，把执行后状态写入本地快照、`listing_jobs.final_status`、响应摘要和 `listing_jobs.evidence_json`；如果刷新失败，则保留平台动作确认结果。`evidence_json` 会脱敏记录请求摘要、执行前状态、动作来源、Playwright 页面证据和执行后状态，便于 `listing status` 审计。
+授权 Playwright 执行器只处理“普通重新发布页已打开目标商品并出现发布入口”的场景：它会尝试设置目标库存、点击“发布/立即发布”，并且只有页面出现“操作成功/发布成功/上架成功/已上架/在售”等确认文本后才记录 `relisted`。普通闲鱼账号的重新发布页可能没有库存输入框；这种情况下 `--stock` 会保留在本地任务和 API 边界里，但不会伪造平台库存修改成功。如果检测到登录页、滑块、验证码、风控提示、找不到目标商品、找不到按钮或点击后没有确认结果，会记录 `playwright_required` 和失败原因，必要时保存截图到 `AUTO_RELIST_SCREENSHOT_DIR`。`--stock` 会作为目标库存写入任务，并传递给 mtop API 或授权浏览器执行器。mtop API 或 Playwright 确认成功后，服务会再尝试刷新一次单商品真实状态，把执行后状态写入本地快照、`listing_jobs.final_status`、响应摘要和 `listing_jobs.evidence_json`；如果刷新失败，则保留平台动作确认结果。`evidence_json` 会脱敏记录请求摘要、执行前状态、动作来源、Playwright 页面证据和执行后状态，便于 `listing status` 审计。
 
 `listing auto-relist set` 用于配置“发货成功后自动重新上架”的商品级策略。运行时还必须开启 `AUTO_RELIST_ENABLED=true`；否则配置只会保存，不会在付款发货后触发。
 
-Playwright 路径会参考 `xianyu-auto-reply` 的页面初始化策略：先访问 `https://seller.goofish.com`，再访问 `https://login.taobao.com/member/login.jhtml` 初始化登录上下文，最后进入商品管理页或发布页。`listing publish` 用于发布新商品。真实发布必须传入 `--confirm-real-publish`，并且必须提供标题、描述、价格、库存和至少一张本地图片路径；遇到登录、滑块、验证码、风控、权限不足、缺少字段、找不到发布按钮或发布后没有平台确认时只记录结构化失败，不伪造成功。
+Playwright 路径会参考 `xianyu-auto-reply` 的普通发布策略：先访问 `https://www.goofish.com`，再访问 `https://login.taobao.com/member/login.jhtml` 初始化登录上下文，最后进入 `https://www.goofish.com/publish` 发布页。`https://seller.goofish.com` 属于卖家工作台/鱼小铺或返佣卖家路径，普通账号没有鱼小铺时可能跳到 `no-permission`，不作为默认重新发布入口。`listing publish` 用于发布新商品。真实发布必须传入 `--confirm-real-publish`，并且必须提供标题、描述、价格、库存和至少一张本地图片路径；遇到登录、滑块、验证码、风控、权限不足、缺少字段、找不到发布按钮或发布后没有平台确认时只记录结构化失败，不伪造成功。
 
 `python main.py web` 会启动本地管理页面，提供总览、自动发货配置、自动重新上架配置、新商品发布和任务记录。页面参考 `xianyu-auto-reply` 的管理台布局，但保留为轻量静态前端和 Python 标准库 HTTP API，不迁入 React/FastAPI/MySQL/Redis。页面不会展示 Cookie/API Key；真实重新上架和真实发布都需要在页面中显式勾选确认。
 
@@ -177,7 +177,7 @@ python main.py listing --help
 2. `python main.py` 启动自动回复并验证一条买家咨询。
 3. 使用测试订单或用户确认的真实订单验证一次幂等发货。
 4. 对用户确认的已发布商品执行重新上架或确认 `already_active` 跳过，并检查 `listing_jobs` 记录。
-5. 对用户确认的新商品执行 `listing publish --confirm-real-publish`，确认浏览器路径会完成 seller 首页、淘宝登录页、发布页三段跳转，并检查页面确认结果。
+5. 对用户确认的新商品执行 `listing publish --confirm-real-publish`，确认浏览器路径会完成闲鱼首页、淘宝登录页、普通发布页三段跳转，并检查页面确认结果。
 6. `python main.py web` 能打开本地管理页面，发货配置、自动上架配置、发布表单和任务表能正常读写本地 API。
 
 ## 开发原则

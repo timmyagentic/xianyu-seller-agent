@@ -3,19 +3,35 @@ from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Callable
 
+from .playwright_browser_options import (
+    ANTI_DETECTION_INIT_SCRIPT,
+    build_browser_context_options,
+    build_browser_launch_options,
+)
 from .models import RelistApiResult, RelistRequest
 
 
-SELLER_HOME_URL = "https://seller.goofish.com"
+SELLER_HOME_URL = "https://www.goofish.com"
 LOGIN_CONTEXT_URL = "https://login.taobao.com/member/login.jhtml"
-SELLER_MANAGEMENT_URL = "https://seller.goofish.com/?site=COMMONPRO#/seller-item"
+SELLER_MANAGEMENT_URL = "https://www.goofish.com/publish?itemId={item_id}&editScene=rePutOn"
 COOKIE_DOMAINS = (".goofish.com", ".taobao.com", ".alipay.com")
 RISK_CONTROL_SELECTORS = (".nc-container", "#nc_1_n1z", ".captcha-container", ".nc_scale")
-RISK_CONTROL_KEYWORDS = ("滑块", "验证码", "captcha", "nc_1_n1z", "风控", "请拖动", "请按住")
+RISK_CONTROL_KEYWORDS = (
+    "滑块",
+    "验证码",
+    "captcha",
+    "nc_1_n1z",
+    "风控",
+    "请拖动",
+    "请按住",
+    "非法访问",
+    "正常浏览器",
+    "保障您的体验",
+)
 LOGIN_KEYWORDS = ("请登录", "扫码登录", "login.taobao.com", "密码登录")
 PERMISSION_KEYWORDS = ("暂无权限", "无权限", "没有权限", "no-permission")
-SUCCESS_KEYWORDS = ("操作成功", "重新上架成功", "上架成功", "已上架", "在售")
-MANAGEMENT_KEYWORDS = ("商品管理", "在售", "下架", "卖掉了", "批量操作", "宝贝")
+SUCCESS_KEYWORDS = ("操作成功", "重新上架成功", "上架成功", "已上架", "发布成功", "已发布", "在售")
+MANAGEMENT_KEYWORDS = ("发闲置", "宝贝图片", "宝贝描述", "价格", "发布", "商品管理", "在售", "下架", "卖掉了", "宝贝")
 STOCK_SELECTORS = (
     'input[placeholder*="库存"]',
     'input[aria-label*="库存"]',
@@ -29,6 +45,13 @@ STOCK_SELECTORS = (
     'xpath=//*[contains(normalize-space(.), "数量")]/following::input[1]',
 )
 RELIST_BUTTON_SELECTORS = (
+    '.publish-button--KBpTVopQ',
+    'button.publish-button--KBpTVopQ',
+    'button:has-text("发布")',
+    'button:has-text("立即发布")',
+    'button.publish-btn',
+    '.publish-btn button',
+    'button[type="submit"]',
     'button:has-text("重新上架")',
     'a:has-text("重新上架")',
     '[role="button"]:has-text("重新上架")',
@@ -73,7 +96,7 @@ def build_playwright_relist_command(
 
 
 class PlaywrightRelistExecutor:
-    """Use an already-authorized browser session to relist an existing item.
+    """Use an already-authorized browser session to re-publish a sold item.
 
     This executor intentionally stops on login, slider, captcha, or missing
     page confirmation. It never tries to solve platform risk controls.
@@ -122,10 +145,11 @@ class PlaywrightRelistExecutor:
         context = None
         try:
             playwright = await async_playwright().start()
-            browser = await playwright.chromium.launch(headless=self.headless)
-            context = await browser.new_context()
+            browser = await playwright.chromium.launch(**build_browser_launch_options(headless=self.headless))
+            context = await browser.new_context(**build_browser_context_options())
             await context.add_cookies(self._build_cookie_payload())
             page = await context.new_page()
+            await self._add_anti_detection_script(page)
             return await self._execute_on_page(page, request)
         except Exception as exc:
             return RelistApiResult(
@@ -178,10 +202,11 @@ class PlaywrightRelistExecutor:
         context = None
         try:
             playwright = await async_playwright().start()
-            browser = await playwright.chromium.launch(headless=self.headless)
-            context = await browser.new_context()
+            browser = await playwright.chromium.launch(**build_browser_launch_options(headless=self.headless))
+            context = await browser.new_context(**build_browser_context_options())
             await context.add_cookies(self._build_cookie_payload())
             page = await context.new_page()
+            await self._add_anti_detection_script(page)
             return await self._preview_on_page(page, request)
         except Exception as exc:
             return {
@@ -203,7 +228,7 @@ class PlaywrightRelistExecutor:
                     pass
 
     async def _execute_on_page(self, page, request: RelistRequest) -> RelistApiResult:
-        await self._open_management_page_with_cookie(page)
+        await self._open_management_page_with_cookie(page, request)
 
         page_text = await self._body_text(page)
         pre_action_page = await self._page_evidence(page, page_text, request)
@@ -222,14 +247,14 @@ class PlaywrightRelistExecutor:
             return RelistApiResult(
                 success=False,
                 failed_reason="title_not_found",
-                response_summary=f"商品管理页未找到期望标题: {request.expected_title}",
+                response_summary=f"重新发布页未找到期望标题: {request.expected_title}",
                 evidence=self._execution_evidence(pre_action_page=pre_action_page),
             )
         if request.item_id not in page_text and request.expected_title not in page_text:
             return RelistApiResult(
                 success=False,
                 failed_reason="item_not_found_on_page",
-                response_summary=f"商品管理页未找到商品: {request.item_id}",
+                response_summary=f"重新发布页未找到商品: {request.item_id}",
                 evidence=self._execution_evidence(pre_action_page=pre_action_page),
             )
 
@@ -243,7 +268,7 @@ class PlaywrightRelistExecutor:
                 success=False,
                 failed_reason="relist_button_not_found",
                 screenshot_path=screenshot_path,
-                response_summary="商品管理页未找到重新上架按钮",
+                response_summary="重新发布页未找到发布按钮",
                 evidence=self._execution_evidence(pre_action_page=pre_action_page),
             )
 
@@ -295,7 +320,7 @@ class PlaywrightRelistExecutor:
         )
 
     async def _preview_on_page(self, page, request: RelistRequest) -> dict:
-        await self._open_management_page_with_cookie(page)
+        await self._open_management_page_with_cookie(page, request)
 
         page_text = await self._body_text(page)
         page_evidence = await self._page_evidence(page, page_text, request)
@@ -316,6 +341,7 @@ class PlaywrightRelistExecutor:
         item_found = title_matches or item_id_matches
         button = await self._find_relist_button(page, request)
         button_found = bool(button)
+        stock_input_found = bool(await self._find_stock_input(page))
         screenshot_path = await self._save_screenshot(page, request.item_id, "preview")
         return {
             "success": item_found and button_found,
@@ -325,6 +351,8 @@ class PlaywrightRelistExecutor:
             "title_found": title_matches,
             "item_id_found": item_id_matches,
             "relist_button_found": button_found,
+            "publish_button_found": button_found,
+            "stock_input_found": stock_input_found,
             "would_fill_stock": request.target_stock,
             "screenshot_path": screenshot_path,
             "failed_reason": "" if item_found and button_found else "preflight_not_actionable",
@@ -333,16 +361,23 @@ class PlaywrightRelistExecutor:
             "page_evidence": page_evidence,
         }
 
-    async def _open_management_page_with_cookie(self, page) -> None:
+    async def _open_management_page_with_cookie(self, page, request: RelistRequest) -> None:
         await page.goto(SELLER_HOME_URL, wait_until="domcontentloaded", timeout=self.timeout_ms)
         await self._wait(page, 1000)
         await page.goto(LOGIN_CONTEXT_URL, wait_until="domcontentloaded", timeout=self.timeout_ms)
         await self._wait(page, 1000)
-        await page.goto(self.management_url, wait_until="domcontentloaded", timeout=self.timeout_ms)
+        await page.goto(self._relist_url(request), wait_until="domcontentloaded", timeout=self.timeout_ms)
         try:
             await page.wait_for_load_state("networkidle", timeout=5000)
         except Exception:
             pass
+        await self._wait(page, 3000)
+        await self._wait_for_publish_form(page)
+
+    def _relist_url(self, request: RelistRequest) -> str:
+        if "{item_id}" in self.management_url:
+            return self.management_url.format(item_id=request.item_id)
+        return self.management_url
 
     async def _detect_blocker(self, page, page_text: str) -> str:
         page_url = str(getattr(page, "url", "") or "").lower()
@@ -362,26 +397,32 @@ class PlaywrightRelistExecutor:
         return ""
 
     async def _fill_stock(self, page, target_stock: int) -> None:
+        stock_input = await self._find_stock_input(page)
+        if not stock_input:
+            return
+        try:
+            await stock_input.click()
+        except Exception:
+            pass
+        try:
+            await stock_input.fill("")
+        except Exception:
+            try:
+                await stock_input.press("Control+A")
+                await stock_input.press("Backspace")
+            except Exception:
+                pass
+        await stock_input.fill(str(target_stock))
+
+    async def _find_stock_input(self, page):
         for selector in STOCK_SELECTORS:
             stock_input = await self._query_selector(page, selector)
             if not stock_input:
                 continue
             if not await self._element_visible(stock_input) or not await self._element_enabled(stock_input):
                 continue
-            try:
-                await stock_input.click()
-            except Exception:
-                pass
-            try:
-                await stock_input.fill("")
-            except Exception:
-                try:
-                    await stock_input.press("Control+A")
-                    await stock_input.press("Backspace")
-                except Exception:
-                    pass
-            await stock_input.fill(str(target_stock))
-            return
+            return stock_input
+        return None
 
     async def _find_relist_button(self, page, request: RelistRequest):
         selectors = []
@@ -459,6 +500,8 @@ class PlaywrightRelistExecutor:
         markers: list[str] = []
         if "seller-item" in lower_url:
             markers.append("seller_item_route")
+        if "publish" in lower_url and "editscene=reputon" in lower_url:
+            markers.append("reputon_publish_route")
         if any(keyword.lower() in lower_text or keyword.lower() in lower_url for keyword in LOGIN_KEYWORDS):
             markers.append("login_text")
         if any(keyword.lower() in lower_text or keyword.lower() in lower_url for keyword in PERMISSION_KEYWORDS):
@@ -473,6 +516,8 @@ class PlaywrightRelistExecutor:
             markers.append("expected_title_text")
         if any(keyword in page_text for keyword in ("重新上架", "恢复上架", "上架")):
             markers.append("relist_text")
+        if any(keyword in page_text for keyword in ("发布", "发闲置")):
+            markers.append("publish_text")
 
         return {
             "url": page_url[:300],
@@ -483,6 +528,7 @@ class PlaywrightRelistExecutor:
                 "input": await self._selector_count(page, "input"),
                 "button": await self._selector_count(page, "button"),
             },
+            "stock_input_found": bool(await self._find_stock_input(page)),
         }
 
     async def _selector_count(self, page, selector: str) -> int:
@@ -490,6 +536,19 @@ class PlaywrightRelistExecutor:
             return len(await page.query_selector_all(selector))
         except Exception:
             return 0
+
+    async def _wait_for_publish_form(self, page) -> None:
+        element_count = (
+            await self._selector_count(page, "input")
+            + await self._selector_count(page, "button")
+            + await self._selector_count(page, "textarea")
+        )
+        if element_count > 0:
+            return
+        try:
+            await page.wait_for_selector("input, button, textarea", timeout=max(self.timeout_ms, 30000))
+        except Exception:
+            pass
 
     def _execution_evidence(self, *, pre_action_page: dict, post_action_page: dict | None = None) -> dict:
         evidence = {
@@ -508,6 +567,12 @@ class PlaywrightRelistExecutor:
     async def _wait(self, page, ms: int) -> None:
         try:
             await page.wait_for_timeout(ms)
+        except Exception:
+            pass
+
+    async def _add_anti_detection_script(self, page) -> None:
+        try:
+            await page.add_init_script(ANTI_DETECTION_INIT_SCRIPT)
         except Exception:
             pass
 
@@ -547,5 +612,5 @@ class PlaywrightRelistExecutor:
         if reason == "login_required":
             return "检测到登录页或登录提示，需要人工重新登录"
         if reason == "permission_required":
-            return "检测到商品管理页权限不足，需要人工确认账号权限"
+            return "检测到重新发布页权限不足，需要人工确认账号权限"
         return reason
