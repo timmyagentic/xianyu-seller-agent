@@ -44,10 +44,14 @@ class FakePage:
         title="发闲置_闲鱼",
         rendered_body_text=None,
         form_rendered=True,
+        post_click_url="",
+        post_click_body_text="",
     ):
         self.body_text = body_text
         self.rendered_body_text = rendered_body_text or body_text
         self.form_rendered = form_rendered
+        self.post_click_url = post_click_url
+        self.post_click_body_text = post_click_body_text
         self.risk_control = risk_control
         self.confirm_after_click = confirm_after_click
         self.url = url
@@ -58,6 +62,10 @@ class FakePage:
         self.relist_button = FakeElement(on_click=self._after_relist_click)
 
     def _after_relist_click(self):
+        if self.post_click_url:
+            self.url = self.post_click_url
+            self.body_text = self.post_click_body_text or self.body_text
+            return
         if self.confirm_after_click:
             self.body_text = f"{self.body_text}\n操作成功 已上架"
 
@@ -159,6 +167,26 @@ def test_playwright_executor_does_not_report_success_without_page_confirmation()
     assert result.success is False
     assert result.failed_reason == "relist_confirmation_missing"
     assert page.relist_button.clicked is True
+
+
+def test_playwright_executor_returns_success_after_item_detail_redirect():
+    page = FakePage(
+        body_text="item-1 资料包 发布",
+        confirm_after_click=False,
+        post_click_url="https://www.goofish.com/item?id=item-1&categoryId=&spm=a21ybx.publish.0.0",
+        post_click_body_text="资料包 为你推荐 相关商品",
+    )
+    executor = PlaywrightRelistExecutor(
+        cookies_str="unb=seller-1; _m_h5_tk=token_123",
+        page_provider=lambda: page,
+    )
+
+    result = asyncio.run(executor.relist(RelistRequest(item_id="item-1", expected_title="资料包")))
+
+    assert result.success is True
+    assert result.final_status == "active"
+    assert page.relist_button.clicked is True
+    assert result.evidence["post_action_page"]["url"].startswith("https://www.goofish.com/item?id=item-1")
 
 
 def test_playwright_preview_detects_item_and_button_without_clicking_or_filling_stock():

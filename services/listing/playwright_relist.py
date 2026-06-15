@@ -294,11 +294,13 @@ class PlaywrightRelistExecutor:
                     post_action_page=post_action_page,
                 ),
             )
-        if any(keyword in page_text_after for keyword in SUCCESS_KEYWORDS):
+        current_url = str(getattr(page, "url", "") or "")
+        if self._is_relist_success(current_url, page_text_after, request):
             screenshot_path = await self._save_screenshot(page, request.item_id, "relisted")
             return RelistApiResult(
                 success=True,
                 final_status="active",
+                item_url=current_url,
                 screenshot_path=screenshot_path,
                 response_summary=page_text_after[:800],
                 evidence=self._execution_evidence(
@@ -536,6 +538,13 @@ class PlaywrightRelistExecutor:
             return len(await page.query_selector_all(selector))
         except Exception:
             return 0
+
+    def _is_relist_success(self, current_url: str, page_text: str, request: RelistRequest) -> bool:
+        if request.item_id and (
+            f"/item/{request.item_id}" in current_url or f"id={request.item_id}" in current_url
+        ):
+            return True
+        return any(keyword in page_text for keyword in SUCCESS_KEYWORDS)
 
     async def _wait_for_publish_form(self, page) -> None:
         element_count = (
