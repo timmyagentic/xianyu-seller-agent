@@ -186,6 +186,33 @@ def test_relist_request_passes_target_stock_to_api_and_records_job(tmp_path):
     assert job.target_stock == 7
 
 
+def test_active_item_with_target_stock_still_executes_relist_action(tmp_path):
+    db_path = str(tmp_path / "listing.db")
+    item = ItemSnapshot(item_id="item-1", title="资料包", status="active")
+    api = FakeStockRelistApi(
+        RelistApiResult(
+            success=True,
+            final_status="active",
+            item_url="https://goofish/item-1",
+            response_summary="stock refreshed",
+        )
+    )
+    service = RelistService(
+        listing_store=ListingStore(db_path=db_path),
+        delivery_store=DeliveryStore(db_path=db_path),
+        item_provider=FakeItemProvider(item),
+        api_client=api,
+    )
+
+    result = asyncio.run(service.relist(load_relist_request({"item_id": "item-1", "stock": 7})))
+
+    assert result.status == "relisted"
+    assert api.calls == [{"item_id": "item-1", "stock": 7}]
+    job = service.listing_store.list_jobs()[0]
+    assert job.previous_status == "active"
+    assert job.result_status == "relisted"
+
+
 def test_relist_refreshes_live_item_status_before_using_local_snapshot(tmp_path):
     db_path = str(tmp_path / "listing.db")
     listing_store = ListingStore(db_path=db_path)

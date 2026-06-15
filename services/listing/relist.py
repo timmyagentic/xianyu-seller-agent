@@ -63,7 +63,7 @@ class RelistService:
                 action_success=False,
             )
 
-        if item.status == "active":
+        if item.status == "active" and request.target_stock is None:
             self._bind_delivery(request)
             return self._record_result(
                 request=request,

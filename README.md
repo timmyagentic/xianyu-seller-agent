@@ -143,7 +143,7 @@ python main.py listing status
 - `AUTO_RELIST_SCREENSHOT_DIR=data/relist-screenshots`：授权浏览器路径保存页面证据的本地目录，默认不提交。
 - `AUTO_RELIST_PLAYWRIGHT_HEADLESS=true`：重新上架浏览器执行器是否无头运行；也兼容旧的 `PLAYWRIGHT_HEADLESS`。
 
-启用自动发货后，程序会监听“我已付款，等待你发货”“等待卖家发货”等付款完成消息，解析订单号、商品 ID、买家和会话，再按商品配置发货。同一订单已经写入 `sent` 日志后会跳过重复发送；如果 `AUTO_CONFIRM_DELIVERY_ENABLED=true` 且该订单尚无 `platform_confirmed` 或 `platform_already_delivered` 日志，程序会继续尝试在闲鱼订单侧确认无物流发货。`data` 库存会按订单购买数量先预占，发送成功后标记 `sent`，发送失败时保留为 `failed_retryable` 以便同一订单重试继续使用原 key。发货内容发送成功但平台确认发货失败时，结果会记录为 `sent_confirm_failed` 和 `platform_confirm_failed`，不会重复发送内容，也不会触发发货后自动重新上架；下次遇到同一订单付款消息时会只重试平台确认。发货成功后，如果同时开启 `AUTO_RELIST_ENABLED=true` 且该商品存在启用的 `auto-relist` 配置，程序会创建重新上架任务并记录目标库存；当 `AUTO_CONFIRM_DELIVERY_ENABLED=true` 时，平台确认失败会阻止这一步。如果允许 Playwright 但没有设置 `AUTO_RELIST_CONFIRM_PLAYWRIGHT=true`，任务会停在需要授权浏览器执行的结构化结果，不会点击页面；失败只影响重新上架任务日志，不回滚已发货结果。
+启用自动发货后，程序会监听“我已付款，等待你发货”“等待卖家发货”等付款完成消息，解析订单号、商品 ID、买家和会话，再按商品配置发货。同一订单已经写入 `sent` 日志后会跳过重复发送；如果 `AUTO_CONFIRM_DELIVERY_ENABLED=true` 且该订单尚无 `platform_confirmed` 或 `platform_already_delivered` 日志，程序会继续尝试在闲鱼订单侧确认无物流发货。`data` 库存会按订单购买数量先预占，发送成功后标记 `sent`，发送失败时保留为 `failed_retryable` 以便同一订单重试继续使用原 key。发货内容发送成功但平台确认发货失败时，结果会记录为 `sent_confirm_failed` 和 `platform_confirm_failed`，不会重复发送内容，也不会触发发货后自动重新上架；下次遇到同一订单付款消息时会只重试平台确认。发货成功后，如果同时开启 `AUTO_RELIST_ENABLED=true` 且该商品存在启用的 `auto-relist` 配置，程序会创建重新上架任务并记录目标库存；带目标库存的重新上架请求即使商品状态显示为 `active`，也会继续执行补库存/重新上架动作，不会用 `already_active` 早退。当 `AUTO_CONFIRM_DELIVERY_ENABLED=true` 时，平台确认失败会阻止这一步。如果允许 Playwright 但没有设置 `AUTO_RELIST_CONFIRM_PLAYWRIGHT=true`，任务会停在需要授权浏览器执行的结构化结果，不会点击页面；失败只影响重新上架任务日志，不回滚已发货结果。
 
 遇到 Cookie 失效、滑块、风控、账号归属不清或真实交易风险时，程序应记录原因并交给人工处理，不实现绕过逻辑。
 
