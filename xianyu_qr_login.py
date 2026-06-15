@@ -106,7 +106,7 @@ class QRLoginManager:
         resp = client.get(self.api_h5_tk, headers=self.headers, timeout=self.timeout)
         session.cookies.update(self._cookies_to_dict(resp.cookies))
 
-        m_h5_tk = session.cookies.get("m_h5_tk", "")
+        m_h5_tk = session.cookies.get("_m_h5_tk") or session.cookies.get("m_h5_tk", "")
         token = m_h5_tk.split("_")[0] if "_" in m_h5_tk else ""
         sign_input = f"{token}&{timestamp}&{app_key}&{data_str}"
         sign = hashlib.md5(sign_input.encode()).hexdigest()

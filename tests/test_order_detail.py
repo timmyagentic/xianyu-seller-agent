@@ -92,7 +92,7 @@ def test_xianyu_apis_get_order_detail_posts_signed_tid_request():
 def test_xianyu_apis_retries_order_detail_with_set_cookie_token(monkeypatch):
     api = XianyuApis()
     api.session.cookies.update({"_m_h5_tk": "oldtoken_123", "unb": "seller-1"})
-    monkeypatch.setattr(api, "update_env_cookies", lambda: None)
+    monkeypatch.setattr(api, "update_env_cookies", lambda *args, **kwargs: None)
     monkeypatch.setattr(time, "sleep", lambda seconds: None)
     calls = []
 

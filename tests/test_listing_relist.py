@@ -397,5 +397,4 @@ def test_playwright_fallback_command_is_constructed_without_running_browser():
         ".goofish.com",
         ".taobao.com",
         ".alipay.com",
-        ".seller.goofish.com",
     )

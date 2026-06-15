@@ -9,11 +9,16 @@ from typing import Any, Dict, List
 def trans_cookies(cookies_str: str) -> Dict[str, str]:
     """解析cookie字符串为字典"""
     cookies = {}
-    for cookie in cookies_str.split("; "):
+    for cookie in cookies_str.split(";"):
         try:
+            cookie = cookie.strip()
+            if not cookie:
+                continue
             parts = cookie.split('=', 1)
             if len(parts) == 2:
-                cookies[parts[0]] = parts[1]
+                key = parts[0].strip()
+                if key:
+                    cookies[key] = parts[1].strip()
         except:
             continue
     return cookies

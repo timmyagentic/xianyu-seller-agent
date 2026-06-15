@@ -9,7 +9,7 @@ from .models import PublishRequest, PublishResult
 SELLER_HOME_URL = "https://seller.goofish.com"
 LOGIN_CONTEXT_URL = "https://login.taobao.com/member/login.jhtml"
 PROMOTION_PUBLISH_URL = "https://seller.goofish.com/?site=COMMONPRO&spm=a21107h.42826273.0.0#/seller-item/publish"
-COOKIE_DOMAINS = (".goofish.com", ".taobao.com", ".alipay.com", ".seller.goofish.com")
+COOKIE_DOMAINS = (".goofish.com", ".taobao.com", ".alipay.com")
 RISK_CONTROL_SELECTORS = (".nc-container", "#nc_1_n1z", ".captcha-container", ".nc_scale")
 RISK_CONTROL_KEYWORDS = ("滑块", "验证码", "captcha", "nc_1_n1z", "风控", "请拖动", "请按住")
 LOGIN_KEYWORDS = ("请登录", "扫码登录", "login.taobao.com", "密码登录")

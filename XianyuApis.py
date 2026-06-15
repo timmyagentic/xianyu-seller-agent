@@ -1,13 +1,15 @@
 import time
 import os
-import re
 import sys
 import json
+import random
 from http.cookies import SimpleCookie
 
 import requests
 from loguru import logger
+from dotenv import dotenv_values, set_key
 from utils.xianyu_utils import generate_sign
+from utils.xianyu_utils import trans_cookies
 from services.delivery.orders import is_session_expired_ret, is_token_expired_ret, parse_order_detail_response
 from services.listing.relist import map_relist_failure_reason, parse_relist_api_response
 
@@ -97,40 +99,218 @@ class XianyuApis:
         merged = self._cookie_dict()
         merged.update(new_cookies)
         self._replace_session_cookies(merged)
-        self.update_env_cookies()
+        self.update_env_cookies(new_cookies)
         return list(new_cookies)
+
+    def _unique_cookie_names(self, names: list[str]) -> list[str]:
+        unique_names: list[str] = []
+        seen = set()
+        for name in names:
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            unique_names.append(name)
+        return unique_names
+
+    def _call_has_login_web(self):
+        cookie_dict = self._cookie_dict()
+        hid = cookie_dict.get("unb", "")
+        if not hid:
+            raise ValueError("Cookie中缺少unb字段，无法调用hasLogin.do")
+
+        now_ms = str(int(time.time() * 1000))
+        page_trace_id = f"21504{now_ms}{random.randint(100000, 999999)}"
+        rnd_value = str(random.random())
+        post_data = (
+            f"hid={hid}"
+            f"&ltl=true"
+            f"&appName=xianyu"
+            f"&appEntrance=web"
+            f"&_csrf_token={cookie_dict.get('_tb_token_', '')}"
+            f"&umidToken={cookie_dict.get('_uab_collina', '') or cookie_dict.get('cna', '')}"
+            f"&hsiz={cookie_dict.get('cookie2', '')}"
+            f"&bizParams=taobaoBizLoginFrom%3Dweb%26renderRefer%3Dhttps%253A%252F%252Fwww.goofish.com%252F"
+            f"&mainPage=false"
+            f"&isMobile=false"
+            f"&lang=zh_CN"
+            f"&returnUrl="
+            f"&fromSite=77"
+            f"&isIframe=true"
+            f"&documentReferer=https%3A%2F%2Fwww.goofish.com%2F"
+            f"&defaultView=hasLogin"
+            f"&umidTag=SERVER"
+            f"&deviceId="
+            f"&pageTraceId={page_trace_id}"
+        )
+        headers = {
+            "accept": "application/json, text/plain, */*",
+            "accept-language": "zh-CN",
+            "content-type": "application/x-www-form-urlencoded",
+            "sec-ch-ua": '"Chromium";v="145", "Not:A-Brand";v="99"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "bx-v": "2.5.31",
+            "user-agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+            ),
+            "referer": (
+                "https://passport.goofish.com/mini_login.htm?"
+                "lang=zh_cn&appName=xianyu&appEntrance=web&styleType=vertical&bizParams="
+                "&notLoadSsoView=false&notKeepLogin=false&isMobile=false&qrCodeFirst=false"
+                f"&stie=77&rnd={rnd_value}"
+            ),
+            "cookie": self.get_cookie_string().replace("\n", "").replace("\r", ""),
+        }
+        if cookie_dict.get("XSRF-TOKEN"):
+            headers["x-xsrf-token"] = cookie_dict["XSRF-TOKEN"]
+
+        return self.session.post(
+            "https://passport.goofish.com/newlogin/hasLogin.do",
+            params={"appName": "xianyu", "fromSite": "77"},
+            data=post_data,
+            headers=headers,
+            timeout=20,
+            allow_redirects=False,
+        )
+
+    def _call_silent_has_login(self):
+        headers = {
+            "accept": "*/*",
+            "accept-language": "en,zh-CN;q=0.9,zh;q=0.8,ru;q=0.7",
+            "cache-control": "no-cache",
+            "pragma": "no-cache",
+            "priority": "u=1, i",
+            "sec-ch-ua": '"Google Chrome";v="146", "Not=A?Brand";v="8", "Not/A)Brand";v="146"',
+            "sec-ch-ua-arch": '"x86"',
+            "sec-ch-ua-bitness": '"64"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Win32"',
+            "sec-ch-ua-platform-version": '"10.0.0"',
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-site",
+            "Referer": "https://www.goofish.com/",
+            "cookie": self.get_cookie_string().replace("\n", "").replace("\r", ""),
+        }
+        return self.session.post(
+            "https://passport.goofish.com/newlogin/silentHasLogin.do",
+            params={
+                "documentReferer": "https://www.goofish.com/",
+                "appName": "xianyu",
+                "appEntrance": "xianyu_sdkSilent",
+                "fromSite": "0",
+                "ltl": "true",
+            },
+            headers=headers,
+            timeout=20,
+            allow_redirects=False,
+        )
+
+    def _call_set_login_settings(self):
+        headers = {
+            "accept": "application/json, text/plain, */*",
+            "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "content-type": "application/x-www-form-urlencoded",
+            "referer": "https://www.goofish.com/",
+            "sec-ch-ua": '"Google Chrome";v="146", "Not=A?Brand";v="8"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-site",
+            "cookie": self.get_cookie_string().replace("\n", "").replace("\r", ""),
+        }
+        return self.session.post(
+            "https://passport.goofish.com/ac/account/setLoginSettings.do",
+            params={"fromSite": "77", "appName": "xianyu", "bizEntrance": "web"},
+            data="status=0",
+            headers=headers,
+            timeout=20,
+            allow_redirects=False,
+        )
+
+    def renew_passport_cookies(self) -> dict:
+        """Renew browser-login cookies with the reference project's passport API chain."""
+        updated_names: list[str] = []
+        step_results: list[str] = []
+        calls = (
+            ("hasLogin.do", self._call_has_login_web),
+            ("silentHasLogin.do", self._call_silent_has_login),
+            ("setLoginSettings.do", self._call_set_login_settings),
+        )
+        for step_name, caller in calls:
+            try:
+                response = caller()
+                updated = self._merge_response_cookies(response)
+                updated_names.extend(updated)
+                success = response.status_code in (200, 302, 303)
+                try:
+                    response_json = response.json()
+                except Exception:
+                    response_json = {}
+                content = response_json.get("content") if isinstance(response_json, dict) else None
+                if isinstance(content, dict) and "success" in content:
+                    success = success and bool(content.get("success"))
+                step_results.append(f"{step_name}:{'success' if success else 'failed'}")
+                if updated:
+                    logger.info(f"{step_name} 已刷新 {len(updated)} 个Cookie字段")
+            except Exception as exc:
+                step_results.append(f"{step_name}:error")
+                logger.warning(f"{step_name} Cookie续期失败: {exc}")
+
+        updated_names = self._unique_cookie_names(updated_names)
+        return {
+            "status": "cookie_updated" if updated_names else "success",
+            "message": " → ".join(step_results),
+            "updated_cookie_names": updated_names,
+        }
         
-    def update_env_cookies(self):
+    def update_env_cookies(self, updated_cookies: dict[str, str] | None = None):
         """更新.env文件中的COOKIES_STR"""
         try:
-            cookie_str = self.get_cookie_string()
-            
-            # 读取.env文件
             env_path = os.path.join(os.getcwd(), '.env')
             if not os.path.exists(env_path):
                 logger.warning(".env文件不存在，无法更新COOKIES_STR")
                 return
-                
-            with open(env_path, 'r', encoding='utf-8') as f:
-                env_content = f.read()
-                
-            # 使用正则表达式替换COOKIES_STR的值
-            if 'COOKIES_STR=' in env_content:
-                new_env_content = re.sub(
-                    r'COOKIES_STR=.*', 
-                    f'COOKIES_STR={cookie_str}',
-                    env_content
-                )
-                
-                # 写回.env文件
-                with open(env_path, 'w', encoding='utf-8') as f:
-                    f.write(new_env_content)
-                    
-                logger.debug("已更新.env文件中的COOKIES_STR")
-            else:
+
+            cookie_map = self._cookie_dict()
+            if updated_cookies is not None:
+                env_cookie_str = (dotenv_values(env_path).get("COOKIES_STR") or "").strip()
+                try:
+                    merged_cookie_map = trans_cookies(env_cookie_str) if env_cookie_str else {}
+                except Exception:
+                    merged_cookie_map = {}
+                for name, value in cookie_map.items():
+                    merged_cookie_map.setdefault(name, value)
+                merged_cookie_map.update(updated_cookies)
+                cookie_map = merged_cookie_map
+                self._replace_session_cookies(cookie_map)
+
+            cookie_str = '; '.join([f"{name}={value}" for name, value in cookie_map.items()])
+            if not dotenv_values(env_path).get("COOKIES_STR"):
                 logger.warning(".env文件中未找到COOKIES_STR配置项")
+                return
+
+            self._set_env_key_locked(env_path, "COOKIES_STR", cookie_str)
+            logger.debug("已更新.env文件中的COOKIES_STR")
         except Exception as e:
             logger.warning(f"更新.env文件失败: {str(e)}")
+
+    def _set_env_key_locked(self, env_path: str, key: str, value: str) -> None:
+        lock_path = f"{env_path}.lock"
+        try:
+            import fcntl
+        except Exception:
+            set_key(env_path, key, value, quote_mode="always")
+            return
+
+        with open(lock_path, "w", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                set_key(env_path, key, value, quote_mode="always")
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
     def renew_login_cookies(self) -> dict:
         """Use the login-user mtop API to proactively refresh mtop cookies."""
@@ -189,13 +369,19 @@ class XianyuApis:
             ret = res_json.get('ret', []) if isinstance(res_json, dict) else []
 
             if any('SUCCESS' in item for item in ret):
-                status = "cookie_updated" if updated_cookies else "success"
-                message = "登录状态正常，Cookie已更新" if updated_cookies else "登录状态正常"
+                passport_result = self.renew_passport_cookies()
+                all_updated_cookies = self._unique_cookie_names(
+                    updated_cookies + passport_result.get("updated_cookie_names", [])
+                )
+                status = "cookie_updated" if all_updated_cookies else "success"
+                message = "登录状态正常，Cookie已更新" if all_updated_cookies else "登录状态正常"
+                if passport_result.get("message"):
+                    message = f"{message}；{passport_result['message']}"
                 logger.info(message)
                 return {
                     "status": status,
                     "message": message,
-                    "updated_cookie_names": updated_cookies,
+                    "updated_cookie_names": all_updated_cookies,
                 }
 
             if is_token_expired_ret(ret):
