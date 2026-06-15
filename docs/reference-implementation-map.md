@@ -50,14 +50,29 @@
 | --- | --- | --- |
 | 商品同步和归属校验 | `xianyu-auto-reply/common/services/item_service.py`、`common/utils/item_info_manager.py`、`backend-web/app/api/routes/items.py` | 已参考 `fetch_all_items_from_account`、`get_item_list_info` 和 `/items/get-all-from-account` 思路；MVP 通过 `listing fetch-items` 调用 `mtop.idle.web.xyh.item.list` 同步在售商品到本地 SQLite `items` 快照表，并通过 `listing item-status` / `listing relist` 前置 `XianyuApis.get_item_status` 重新查询当前账号状态，未命中在售列表时使用商品详情接口兜底，区分 `active`、`inactive`、`sold`、`relistable` 等状态，不迁入 SQLAlchemy/Redis |
 | 商品操作 API 调用模式 | `xianyu-auto-reply/promotion/backend/app/services/item_delete_api_service.py` | 已参考 mtop seller API 的签名、Cookie、`needLoginPC`、Set-Cookie 合并和 token 过期重试模式，落地为 `XIANYU_RELIST_API` 可配置调用边界；未硬编码未知重新上架接口，也不复用删除动作本身 |
-| Playwright 兜底浏览器控制 | `xianyu-auto-reply/common/services/promotion_xianyu_publisher.py`、`backend-web/app/services/xianyu_publisher.py` | 已落地 Cookie 域、商品管理 URL、库存输入选择器、登录/滑块/验证码/风控检测、`listing relist-preflight` 只读页面预检和授权浏览器重新上架执行器；preflight 会输出 URL、标题、状态标记和元素数量等安全页面证据，不输出完整页面正文；CLI 真实点击必须同时传入 `--allow-playwright --confirm-real-relist`，发货后后台 hook 必须设置 `AUTO_RELIST_CONFIRM_PLAYWRIGHT=true`；默认不启动浏览器，不走空白发布表单、图片上传和新建商品流程，只有页面确认成功后才记录 `relisted` |
+| Playwright 兜底浏览器控制 | `xianyu-auto-reply/common/services/promotion_xianyu_publisher.py`、`backend-web/app/services/xianyu_publisher.py` | 已落地 Cookie 域、seller 首页 -> 淘宝登录页 -> 商品管理页三段登录上下文预热、商品管理 URL、库存输入选择器、登录/滑块/验证码/风控检测、`listing relist-preflight` 只读页面预检和授权浏览器重新上架执行器；preflight 会输出 URL、标题、状态标记和元素数量等安全页面证据，不输出完整页面正文；CLI 真实点击必须同时传入 `--allow-playwright --confirm-real-relist`，发货后后台 hook 必须设置 `AUTO_RELIST_CONFIRM_PLAYWRIGHT=true`；只有页面确认成功后才记录 `relisted` |
 | 商品管理数量/状态判断 | `promotion/backend/app/services/publish_rule_scheduler.py`、`common/services/item_service.py` | 已基于商品快照状态、标题和 `item_id` 回查做 `already_active`、标题不匹配和归属失败判断 |
 | 目标库存字段 | `common/services/promotion_xianyu_publisher.py`、`promotion/backend/app/services/publish_rule_scheduler.py` | 已参考发布流程的 `stock` 字段，把重新上架目标库存保存为 `target_stock`，并通过 CLI、任务日志和可注入 API 边界传递；当前不会伪造平台库存修改成功 |
 | 上架后绑定发货内容 | `promotion/backend/app/services/publish_coupon_card_service.py` | 已改为 upsert 本地 `delivery_configs`，重新上架成功或已处于上架状态后绑定目标 `item_id` |
 
+## 发布新商品
+
+| 能力 | 参考文件 | 迁移说明 |
+| --- | --- | --- |
+| 发布页登录上下文预热 | `xianyu-auto-reply/common/services/promotion_xianyu_publisher.py` | 已迁入 seller 首页 -> 淘宝登录页 -> 返佣卖家发布页三段跳转，消除直接打开 seller 页面造成的登录上下文差异 |
+| 发布页字段填写 | `xianyu-auto-reply/common/services/promotion_xianyu_publisher.py`、`backend-web/app/services/xianyu_publisher.py` | 已迁入标题、描述、价格、库存、图片和发布按钮定位策略；不迁入素材库、地址池、分类兜底、返佣选品和后台批量调度 |
+| 发布结果确认 | `backend-web/app/services/xianyu_publisher.py` | 已参考跳转商品详情页、页面成功提示和失败提示判断；没有平台确认时返回 `publish_confirmation_missing`，不伪造成功 |
+
+## 本地前端
+
+| 能力 | 参考文件 | 迁移说明 |
+| --- | --- | --- |
+| 管理台信息架构 | `xianyu-auto-reply/promotion/frontend/src/App.tsx`、`src/config/navigation.ts` | 已新增轻量本地管理页面，包含总览、自动发货、自动上架、发布商品和任务记录；不迁入 React/Vite 依赖、登录系统、用户权限、MySQL/Redis/FastAPI 后台 |
+| 管理台 API | `xianyu-auto-reply/promotion/backend/app/api/routes/*` | 已用 Python 标准库 HTTP server 提供本地 JSON API，复用 SQLite store 和现有执行器；真实发布和真实重新上架都必须显式确认 |
+
 MVP 重新上架的目标是“对一个已经发布过、仍能在商品管理中找到的商品执行重新上架”。当前实现已完成本地任务记录、真实状态刷新、归属校验、已上架幂等跳过、目标库存记录、API 结果解析边界、可配置 mtop 重新上架调用、授权 Playwright 执行器和发货配置绑定。发货后自动重新上架由 `AUTO_RELIST_ENABLED` 和商品级 `auto_relist_configs` 同时控制，并会复用运行中的 `XianyuApis` 先刷新当前状态。无论 mtop 还是 Playwright 路径，都必须记录前置状态、动作结果、目标库存、最终商品状态和截图或响应摘要；动作确认成功后会再尝试刷新单商品真实状态，并把执行请求、执行前状态、动作来源、Playwright 页面证据和执行后状态写入 `listing_jobs.evidence_json`，同时更新本地快照、`listing_jobs.final_status` 和响应摘要；遇到登录、滑块、验证码、风控、找不到按钮或缺少页面确认时只记录结构化失败，不绕过也不误报成功。
 
-暂不迁入：素材库后台、发布规则定时器、返佣选品、从本地草稿创建全新商品、发布删除规则、用户权限和管理页面。
+暂不迁入：素材库后台、发布规则定时器、返佣选品、发布删除规则、用户权限、React/Vite 构建链路和重后台服务。
 
 ## 后续实现约束
 

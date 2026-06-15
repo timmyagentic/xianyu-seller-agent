@@ -6,6 +6,8 @@ from typing import Callable
 from .models import RelistApiResult, RelistRequest
 
 
+SELLER_HOME_URL = "https://seller.goofish.com"
+LOGIN_CONTEXT_URL = "https://login.taobao.com/member/login.jhtml"
 SELLER_MANAGEMENT_URL = "https://seller.goofish.com/?site=COMMONPRO#/seller-item"
 COOKIE_DOMAINS = (".goofish.com", ".taobao.com", ".alipay.com", ".seller.goofish.com")
 RISK_CONTROL_SELECTORS = (".nc-container", "#nc_1_n1z", ".captcha-container", ".nc_scale")
@@ -201,11 +203,7 @@ class PlaywrightRelistExecutor:
                     pass
 
     async def _execute_on_page(self, page, request: RelistRequest) -> RelistApiResult:
-        await page.goto(self.management_url, wait_until="domcontentloaded", timeout=self.timeout_ms)
-        try:
-            await page.wait_for_load_state("networkidle", timeout=5000)
-        except Exception:
-            pass
+        await self._open_management_page_with_cookie(page)
 
         page_text = await self._body_text(page)
         pre_action_page = await self._page_evidence(page, page_text, request)
@@ -297,11 +295,7 @@ class PlaywrightRelistExecutor:
         )
 
     async def _preview_on_page(self, page, request: RelistRequest) -> dict:
-        await page.goto(self.management_url, wait_until="domcontentloaded", timeout=self.timeout_ms)
-        try:
-            await page.wait_for_load_state("networkidle", timeout=5000)
-        except Exception:
-            pass
+        await self._open_management_page_with_cookie(page)
 
         page_text = await self._body_text(page)
         page_evidence = await self._page_evidence(page, page_text, request)
@@ -313,6 +307,7 @@ class PlaywrightRelistExecutor:
                 "failed_reason": risk_reason,
                 "screenshot_path": screenshot_path,
                 "response_summary": self._blocker_summary(risk_reason),
+                "warmup_urls": self._warmup_urls(),
                 "page_evidence": page_evidence,
             }
 
@@ -334,8 +329,20 @@ class PlaywrightRelistExecutor:
             "screenshot_path": screenshot_path,
             "failed_reason": "" if item_found and button_found else "preflight_not_actionable",
             "response_summary": "preview only; no click or stock fill executed",
+            "warmup_urls": self._warmup_urls(),
             "page_evidence": page_evidence,
         }
+
+    async def _open_management_page_with_cookie(self, page) -> None:
+        await page.goto(SELLER_HOME_URL, wait_until="domcontentloaded", timeout=self.timeout_ms)
+        await self._wait(page, 1000)
+        await page.goto(LOGIN_CONTEXT_URL, wait_until="domcontentloaded", timeout=self.timeout_ms)
+        await self._wait(page, 1000)
+        await page.goto(self.management_url, wait_until="domcontentloaded", timeout=self.timeout_ms)
+        try:
+            await page.wait_for_load_state("networkidle", timeout=5000)
+        except Exception:
+            pass
 
     async def _detect_blocker(self, page, page_text: str) -> str:
         page_url = str(getattr(page, "url", "") or "").lower()
@@ -488,11 +495,21 @@ class PlaywrightRelistExecutor:
         evidence = {
             "executor": "playwright",
             "management_url": self.management_url,
+            "warmup_urls": self._warmup_urls(),
             "pre_action_page": pre_action_page,
         }
         if post_action_page is not None:
             evidence["post_action_page"] = post_action_page
         return evidence
+
+    def _warmup_urls(self) -> list[str]:
+        return [SELLER_HOME_URL, LOGIN_CONTEXT_URL, self.management_url]
+
+    async def _wait(self, page, ms: int) -> None:
+        try:
+            await page.wait_for_timeout(ms)
+        except Exception:
+            pass
 
     async def _save_screenshot(self, page, item_id: str, suffix: str) -> str:
         if not self.screenshot_dir:

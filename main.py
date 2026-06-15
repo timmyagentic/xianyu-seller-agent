@@ -21,10 +21,13 @@ from services.delivery.orders import OrderDetail, OrderInfo
 from services.delivery.service import DeliveryService
 from services.delivery.store import DeliveryStore
 from services.listing.fetch_items import sync_published_items
+from services.listing.models import PublishRequest
+from services.listing.playwright_publish import PlaywrightPublishExecutor
 from services.listing.playwright_relist import PlaywrightRelistExecutor
 from services.listing.relist import RelistService, load_relist_request
 from services.listing.store import ListingStore
 from services.messages import MessageDeduplicator, MessageParser
+from services.web_app import run_web_server
 from xianyu_qr_login import QRLoginError, run_qr_login_cli
 
 
@@ -1006,6 +1009,18 @@ def _build_playwright_relist_executor(*, cookies_str: str, allow_playwright: boo
     )
 
 
+def _build_playwright_publish_executor(*, cookies_str: str, allow_playwright: bool):
+    if not allow_playwright or not cookies_str:
+        return None
+    screenshot_dir = os.getenv("AUTO_PUBLISH_SCREENSHOT_DIR", "data/publish-screenshots")
+    headless = os.getenv("AUTO_PUBLISH_PLAYWRIGHT_HEADLESS", os.getenv("PLAYWRIGHT_HEADLESS", "true")).lower() != "false"
+    return PlaywrightPublishExecutor(
+        cookies_str=cookies_str,
+        headless=headless,
+        screenshot_dir=screenshot_dir,
+    )
+
+
 def _public_item_status_payload(item: dict) -> dict:
     keys = (
         "item_id",
@@ -1040,6 +1055,11 @@ def _public_item_status_payload(item: dict) -> dict:
 def build_cli_parser():
     parser = argparse.ArgumentParser(prog="python main.py")
     subparsers = parser.add_subparsers(dest="command")
+
+    web_parser = subparsers.add_parser("web", help="启动本地管理页面")
+    web_parser.add_argument("--host", default=os.getenv("WEB_HOST", "127.0.0.1"))
+    web_parser.add_argument("--port", type=int, default=int(os.getenv("WEB_PORT", "8765")))
+    web_parser.add_argument("--db-path", default=os.getenv("DB_PATH", "data/chat_history.db"))
 
     delivery_parser = subparsers.add_parser("delivery", help="管理本地自动发货配置")
     delivery_parser.add_argument("--db-path", default=os.getenv("DB_PATH", "data/chat_history.db"))
@@ -1083,6 +1103,16 @@ def build_cli_parser():
     relist_parser.add_argument("--allow-playwright", action="store_true")
     relist_parser.add_argument("--confirm-real-relist", action="store_true")
 
+    publish_parser = listing_subparsers.add_parser("publish", help="通过卖家发布页发布新商品")
+    publish_parser.add_argument("config_path", nargs="?")
+    publish_parser.add_argument("--title")
+    publish_parser.add_argument("--description", default="")
+    publish_parser.add_argument("--description-file")
+    publish_parser.add_argument("--price")
+    publish_parser.add_argument("--stock", type=int, default=1)
+    publish_parser.add_argument("--image", action="append", default=[])
+    publish_parser.add_argument("--confirm-real-publish", action="store_true")
+
     preflight_parser = listing_subparsers.add_parser("relist-preflight", help="只读预检授权浏览器是否能定位重新上架入口")
     preflight_parser.add_argument("--item-id", required=True)
     preflight_parser.add_argument("--expected-title", default="")
@@ -1124,6 +1154,10 @@ def build_cli_parser():
 def run_cli(argv=None):
     parser = build_cli_parser()
     args = parser.parse_args(argv)
+
+    if args.command == "web":
+        run_web_server(host=args.host, port=args.port, db_path=args.db_path)
+        return 0
 
     if args.command == "delivery":
         store = DeliveryStore(db_path=args.db_path)
@@ -1227,6 +1261,69 @@ def run_cli(argv=None):
             result = asyncio.run(service.relist(request))
             print(json.dumps(result.__dict__, ensure_ascii=False, indent=2))
             return 0
+
+        if args.listing_command == "publish":
+            if args.config_path:
+                data = json.loads(Path(args.config_path).read_text(encoding="utf-8"))
+                title = str(data.get("title") or "")
+                description = str(data.get("description") or "")
+                price = str(data.get("price") or "")
+                stock = int(data.get("stock") or 1)
+                images = tuple(str(image) for image in data.get("images", []) if str(image).strip())
+            else:
+                if not args.title:
+                    parser.error("listing publish requires --title or a config path")
+                description = args.description
+                if args.description_file:
+                    description = Path(args.description_file).read_text(encoding="utf-8")
+                title = args.title
+                price = args.price or ""
+                stock = args.stock
+                images = tuple(args.image or [])
+            if stock < 1:
+                parser.error("listing publish --stock must be greater than 0")
+
+            request = PublishRequest(
+                title=title,
+                description=description,
+                price=price,
+                stock=stock,
+                images=images,
+            )
+            executor = _build_playwright_publish_executor(
+                cookies_str=os.getenv("COOKIES_STR", ""),
+                allow_playwright=bool(getattr(args, "confirm_real_publish", False)),
+            )
+            if not executor:
+                print(
+                    json.dumps(
+                        {
+                            "success": False,
+                            "failed_reason": "real_publish_confirmation_required",
+                            "message": "listing publish requires --confirm-real-publish and COOKIES_STR",
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+                return 1
+            result = asyncio.run(executor.publish(request))
+            if result.success and result.item_id:
+                listing_store.save_item_snapshot(
+                    {
+                        "item_id": result.item_id,
+                        "itemId": result.item_id,
+                        "id": result.item_id,
+                        "title": request.title,
+                        "status": "active",
+                        "item_url": result.item_url,
+                        "itemUrl": result.item_url,
+                        "status_source": "publish_result",
+                        "stock": request.stock,
+                    }
+                )
+            print(json.dumps(result.__dict__, ensure_ascii=False, indent=2))
+            return 0 if result.success else 1
 
         if args.listing_command == "auto-relist":
             if args.auto_relist_command == "set":
@@ -1404,7 +1501,7 @@ if __name__ == '__main__':
             logger.error(f"扫码登录失败: {e}")
             sys.exit(1)
 
-    if len(sys.argv) > 1 and sys.argv[1] in {"delivery", "listing", "--help", "-h"}:
+    if len(sys.argv) > 1 and sys.argv[1] in {"delivery", "listing", "web", "--help", "-h"}:
         sys.exit(run_cli(sys.argv[1:]))
     
     # 交互式检查并补全配置

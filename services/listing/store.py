@@ -143,6 +143,24 @@ class ListingStore:
             )
         return True, changed
 
+    def list_item_snapshots(self, limit: int = 100) -> list[ItemSnapshot]:
+        with sqlite3.connect(self.db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT item_id
+                FROM items
+                ORDER BY last_updated DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        snapshots = []
+        for (item_id,) in rows:
+            snapshot = self.get_item_snapshot(item_id)
+            if snapshot:
+                snapshots.append(snapshot)
+        return snapshots
+
     def record_job(
         self,
         *,

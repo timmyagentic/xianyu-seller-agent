@@ -19,6 +19,26 @@ class RelistRequest:
 
 
 @dataclass(frozen=True)
+class PublishRequest:
+    title: str
+    description: str
+    price: str
+    stock: int
+    images: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class PublishResult:
+    success: bool
+    item_id: str = ""
+    item_url: str = ""
+    screenshot_path: str = ""
+    response_summary: str = ""
+    failed_reason: str = ""
+    evidence: dict | None = None
+
+
+@dataclass(frozen=True)
 class AutoRelistConfig:
     id: int
     item_id: str

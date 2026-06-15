@@ -1,7 +1,12 @@
 import asyncio
 
 from services.listing.models import RelistRequest
-from services.listing.playwright_relist import PlaywrightRelistExecutor
+from services.listing.playwright_relist import (
+    LOGIN_CONTEXT_URL,
+    SELLER_HOME_URL,
+    SELLER_MANAGEMENT_URL,
+    PlaywrightRelistExecutor,
+)
 
 
 class FakeElement:
@@ -115,6 +120,8 @@ def test_playwright_executor_fills_stock_and_returns_success_after_page_confirma
     assert page.relist_button.clicked is True
     assert "操作成功" in result.response_summary
     assert result.evidence["executor"] == "playwright"
+    assert result.evidence["warmup_urls"] == [SELLER_HOME_URL, LOGIN_CONTEXT_URL, SELLER_MANAGEMENT_URL]
+    assert page.goto_urls == [SELLER_HOME_URL, LOGIN_CONTEXT_URL, SELLER_MANAGEMENT_URL]
     assert result.evidence["pre_action_page"]["element_counts"]["input"] == 1
     assert result.evidence["post_action_page"]["body_text_length"] >= result.evidence["pre_action_page"]["body_text_length"]
 
@@ -145,6 +152,8 @@ def test_playwright_preview_detects_item_and_button_without_clicking_or_filling_
     )
 
     assert result["success"] is True
+    assert result["warmup_urls"] == [SELLER_HOME_URL, LOGIN_CONTEXT_URL, SELLER_MANAGEMENT_URL]
+    assert page.goto_urls == [SELLER_HOME_URL, LOGIN_CONTEXT_URL, SELLER_MANAGEMENT_URL]
     assert result["item_found"] is True
     assert result["relist_button_found"] is True
     assert result["would_fill_stock"] == 7
