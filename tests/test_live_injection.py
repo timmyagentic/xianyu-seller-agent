@@ -4,7 +4,7 @@ import json
 import time
 
 from main import XianyuLive
-from services.delivery.orders import OrderDetail
+from services.delivery.orders import OrderDetail, OrderInfo
 from services.delivery.service import DeliveryService
 from services.delivery.store import DeliveryStore
 from services.messages import MessageDeduplicator, MessageParser
@@ -40,6 +40,7 @@ def test_xianyu_live_marks_incoming_message_as_read():
 class FakeXianyuApi:
     def __init__(self):
         self.calls = 0
+        self.confirm_calls = []
 
     def renew_login_cookies(self):
         self.calls += 1
@@ -51,6 +52,10 @@ class FakeXianyuApi:
 
     def get_cookie_string(self):
         return "unb=seller-1; _m_h5_tk=newtoken_456"
+
+    def confirm_delivery(self, order_id, item_id=None):
+        self.confirm_calls.append({"order_id": order_id, "item_id": item_id})
+        return {"success": True, "message": "SUCCESS::调用成功"}
 
 
 def test_xianyu_live_refresh_cookies_updates_runtime_cookie_string():
@@ -67,6 +72,29 @@ def test_xianyu_live_refresh_cookies_updates_runtime_cookie_string():
     assert live.cookies_str == "unb=seller-1; _m_h5_tk=newtoken_456"
     assert live.cookies["_m_h5_tk"] == "newtoken_456"
     assert live.last_cookie_refresh_time > 0
+
+
+def test_xianyu_live_confirms_platform_delivery_and_syncs_cookies():
+    live = XianyuLive.__new__(XianyuLive)
+    live.xianyu = FakeXianyuApi()
+    live.cookies_str = "unb=seller-1; _m_h5_tk=oldtoken_123"
+    live.cookies = {"unb": "seller-1", "_m_h5_tk": "oldtoken_123"}
+
+    result = asyncio.run(
+        live.confirm_platform_delivery(
+            OrderInfo(
+                order_id="order-1",
+                item_id="item-1",
+                buyer_id="buyer-1",
+                chat_id="chat-1",
+            )
+        )
+    )
+
+    assert result["success"] is True
+    assert live.xianyu.confirm_calls == [{"order_id": "order-1", "item_id": "item-1"}]
+    assert live.cookies_str == "unb=seller-1; _m_h5_tk=newtoken_456"
+    assert live.cookies["_m_h5_tk"] == "newtoken_456"
 
 
 class FakeDeliverySender:
@@ -86,6 +114,18 @@ class FakeReplyBot:
     def generate_reply(self, user_msg, item_desc, context=None):
         self.calls.append({"user_msg": user_msg, "item_desc": item_desc, "context": context})
         return "自动回复"
+
+
+def test_xianyu_live_wires_auto_confirm_delivery_flag(monkeypatch, tmp_path):
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "app.db"))
+    monkeypatch.setenv("AUTO_DELIVERY_ENABLED", "true")
+    monkeypatch.setenv("AUTO_CONFIRM_DELIVERY_ENABLED", "true")
+
+    live = XianyuLive("unb=seller-1", reply_bot=FakeReplyBot())
+
+    assert live.delivery_service.enabled is True
+    assert live.delivery_service.confirm_delivery_enabled is True
+    assert live.delivery_service.confirm_delivery is not None
 
 
 def test_xianyu_live_skips_chat_reply_when_auto_reply_disabled():
@@ -157,6 +197,36 @@ def test_xianyu_live_delivers_paid_order_message_once(tmp_path):
         {"chat_id": "chat-1", "buyer_id": "buyer-1", "content": "订单 order-1 买家 buyer-1"}
     ]
     assert store.has_sent_order("order-1") is True
+    assert [payload["lwp"] for payload in websocket.sent[-2:]] == [
+        "/r/Conversation/clearRedPoint",
+        "/r/MessageStatus/read",
+    ]
+
+
+class FailingConfirmDelivery:
+    async def __call__(self, order):
+        return {"success": False, "error": "确认发货失败"}
+
+
+def test_xianyu_live_marks_paid_message_read_after_delivery_content_sent_even_if_confirm_fails(tmp_path):
+    store = DeliveryStore(db_path=str(tmp_path / "delivery.db"))
+    store.add_config(item_id="item-1", name="文本", delivery_type="text", content="发货内容")
+    sender = FakeDeliverySender()
+    live = _live_with_delivery(store, sender)
+    live.delivery_service = DeliveryService(
+        store=store,
+        send_message=sender,
+        enabled=True,
+        confirm_delivery=FailingConfirmDelivery(),
+        confirm_delivery_enabled=True,
+    )
+    websocket = FakeWebSocket()
+
+    result = asyncio.run(live.handle_paid_order_message(_paid_order_message(), websocket))
+
+    assert result.status == "sent_confirm_failed"
+    assert sender.calls == [{"chat_id": "chat-1", "buyer_id": "buyer-1", "content": "发货内容"}]
+    assert store.has_delivery_status("order-1", "platform_confirm_failed") is True
     assert [payload["lwp"] for payload in websocket.sent[-2:]] == [
         "/r/Conversation/clearRedPoint",
         "/r/MessageStatus/read",

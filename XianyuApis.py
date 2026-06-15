@@ -874,3 +874,98 @@ class XianyuApis:
             logger.error(f"订单详情API请求异常: {str(e)}")
             time.sleep(0.5)
             return self.get_order_detail(order_id, retry_count + 1)
+
+    def confirm_delivery(self, order_id, item_id=None, retry_count=0):
+        """在闲鱼订单侧执行无物流确认发货。"""
+        if retry_count >= 5:
+            logger.error("自动确认发货失败，重试次数过多")
+            return {"success": False, "error": "自动确认发货失败，重试次数过多", "order_id": str(order_id)}
+
+        timestamp = str(int(time.time()) * 1000)
+        payload = {
+            "orderId": str(order_id),
+            "tradeText": "",
+            "picList": [],
+            "newUnconsign": True,
+        }
+        data_val = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        token = self._cookie_value('_m_h5_tk').split('_')[0]
+        sign = generate_sign(timestamp, token, data_val)
+        params = {
+            'jsv': '2.7.2',
+            'appKey': '34839810',
+            't': timestamp,
+            'sign': sign,
+            'v': '1.0',
+            'type': 'originaljson',
+            'accountSite': 'xianyu',
+            'dataType': 'json',
+            'timeout': '20000',
+            'api': 'mtop.taobao.idle.logistic.consign.dummy',
+            'sessionOption': 'AutoLoginOnly',
+        }
+        data = {'data': data_val}
+        headers = {
+            'accept': 'application/json',
+            'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'content-type': 'application/x-www-form-urlencoded',
+            'origin': 'https://www.goofish.com',
+            'referer': 'https://www.goofish.com/',
+        }
+
+        try:
+            response = self.session.post(
+                'https://h5api.m.goofish.com/h5/mtop.taobao.idle.logistic.consign.dummy/1.0/',
+                params=params,
+                data=data,
+                headers=headers,
+            )
+            res_json = response.json()
+            updated_cookies = self._merge_response_cookies(response)
+            ret_value = res_json.get('ret', []) if isinstance(res_json, dict) else []
+            ret_msg = str(ret_value[0]) if ret_value else ""
+
+            if ret_msg == 'SUCCESS::调用成功' or any('SUCCESS' in str(item) for item in ret_value):
+                logger.info(f"自动确认发货成功: 订单={order_id}, 商品={item_id or ''}")
+                return {
+                    "success": True,
+                    "order_id": str(order_id),
+                    "item_id": str(item_id or ""),
+                    "message": ret_msg or "SUCCESS::调用成功",
+                    "ret": ret_value,
+                }
+
+            if 'ORDER_ALREADY_DELIVERY' in ret_msg or '已发货成功' in ret_msg or '已发货' in ret_msg:
+                logger.info(f"订单已发货，无需重复确认: 订单={order_id}")
+                return {
+                    "success": True,
+                    "already_delivered": True,
+                    "order_id": str(order_id),
+                    "item_id": str(item_id or ""),
+                    "message": ret_msg,
+                    "ret": ret_value,
+                }
+
+            if is_token_expired_ret(ret_value) or is_session_expired_ret(ret_value):
+                if updated_cookies:
+                    logger.debug(f"确认发货检测到Set-Cookie，已更新 {len(updated_cookies)} 个cookie字段")
+                time.sleep(0.5)
+                return self.confirm_delivery(order_id, item_id=item_id, retry_count=retry_count + 1)
+
+            if any(keyword in ret_msg for keyword in ("RGV587_ERROR", "滑块", "验证码", "风控", "被挤爆")):
+                return {
+                    "success": False,
+                    "order_id": str(order_id),
+                    "item_id": str(item_id or ""),
+                    "error": "risk_control",
+                    "message": ret_msg,
+                    "ret": ret_value,
+                }
+
+            logger.warning(f"自动确认发货失败: 订单={order_id}, ret={ret_value}")
+            time.sleep(0.5)
+            return self.confirm_delivery(order_id, item_id=item_id, retry_count=retry_count + 1)
+        except Exception as e:
+            logger.error(f"自动确认发货API请求异常: {str(e)}")
+            time.sleep(0.5)
+            return self.confirm_delivery(order_id, item_id=item_id, retry_count=retry_count + 1)

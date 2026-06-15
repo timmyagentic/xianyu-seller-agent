@@ -11,6 +11,7 @@ from .store import DeliveryStore
 
 SendMessage = Callable[..., Awaitable[bool] | bool]
 PostDeliveryHook = Callable[[OrderInfo, "DeliveryResult"], Awaitable[None] | None]
+ConfirmDelivery = Callable[[OrderInfo], Awaitable[dict] | dict]
 
 
 @dataclass(frozen=True)
@@ -19,6 +20,9 @@ class DeliveryResult:
     order_id: str
     message: str = ""
     content: str = ""
+    platform_confirm_status: str = ""
+    platform_confirm_message: str = ""
+    platform_confirm_failed_reason: str = ""
 
 
 class DeliveryService:
@@ -30,18 +34,22 @@ class DeliveryService:
         enabled: bool = False,
         api_client: ApiDeliveryClient | None = None,
         post_delivery_hook: PostDeliveryHook | None = None,
+        confirm_delivery: ConfirmDelivery | None = None,
+        confirm_delivery_enabled: bool = False,
     ):
         self.store = store
         self.send_message = send_message
         self.enabled = enabled
         self.api_client = api_client or ApiDeliveryClient()
         self.post_delivery_hook = post_delivery_hook
+        self.confirm_delivery = confirm_delivery
+        self.confirm_delivery_enabled = confirm_delivery_enabled
 
     async def deliver_order(self, order: OrderInfo) -> DeliveryResult:
         if not self.enabled:
             return DeliveryResult(status="disabled", order_id=order.order_id)
         if self.store.has_sent_order(order.order_id):
-            return DeliveryResult(status="already_sent", order_id=order.order_id)
+            return await self._handle_already_sent_order(order)
 
         config = self.store.get_enabled_config(order.item_id)
         if not config:
@@ -112,9 +120,119 @@ class DeliveryService:
             content=content,
             status="sent",
         )
-        result = DeliveryResult(status="sent", order_id=order.order_id, content=content)
-        await self._run_post_delivery_hook(order, result, config_id=config.id)
+        result = await self._confirm_after_successful_send(order, content=content, config_id=config.id)
+        if result.status == "sent":
+            await self._run_post_delivery_hook(order, result, config_id=config.id)
         return result
+
+    async def _handle_already_sent_order(self, order: OrderInfo) -> DeliveryResult:
+        result = DeliveryResult(status="already_sent", order_id=order.order_id)
+        if not self.confirm_delivery_enabled or self.store.has_platform_confirmed_order(order.order_id):
+            return result
+        confirm_result = await self._confirm_platform_delivery(order)
+        self._record_platform_confirm_log(order, config_id=None, content="", confirm_result=confirm_result)
+        if confirm_result["success"]:
+            return DeliveryResult(
+                status="already_sent",
+                order_id=order.order_id,
+                platform_confirm_status=confirm_result["status"],
+                platform_confirm_message=confirm_result["message"],
+            )
+        return DeliveryResult(
+            status="already_sent_confirm_failed",
+            order_id=order.order_id,
+            message=confirm_result["failed_reason"],
+            platform_confirm_status="failed",
+            platform_confirm_message=confirm_result["message"],
+            platform_confirm_failed_reason=confirm_result["failed_reason"],
+        )
+
+    async def _confirm_after_successful_send(
+        self,
+        order: OrderInfo,
+        *,
+        content: str,
+        config_id: int,
+    ) -> DeliveryResult:
+        if not self.confirm_delivery_enabled:
+            return DeliveryResult(status="sent", order_id=order.order_id, content=content)
+
+        confirm_result = await self._confirm_platform_delivery(order)
+        self._record_platform_confirm_log(order, config_id=config_id, content=content, confirm_result=confirm_result)
+        if confirm_result["success"]:
+            return DeliveryResult(
+                status="sent",
+                order_id=order.order_id,
+                content=content,
+                platform_confirm_status=confirm_result["status"],
+                platform_confirm_message=confirm_result["message"],
+            )
+        return DeliveryResult(
+            status="sent_confirm_failed",
+            order_id=order.order_id,
+            message=confirm_result["failed_reason"],
+            content=content,
+            platform_confirm_status="failed",
+            platform_confirm_message=confirm_result["message"],
+            platform_confirm_failed_reason=confirm_result["failed_reason"],
+        )
+
+    async def _confirm_platform_delivery(self, order: OrderInfo) -> dict:
+        if not self.confirm_delivery:
+            return {
+                "success": False,
+                "status": "failed",
+                "message": "",
+                "failed_reason": "confirm_delivery_not_configured",
+            }
+        result = self.confirm_delivery(order)
+        if inspect.isawaitable(result):
+            result = await result
+        return self._normalize_confirm_result(result)
+
+    def _normalize_confirm_result(self, result) -> dict:
+        if not isinstance(result, dict):
+            return {
+                "success": False,
+                "status": "failed",
+                "message": str(result),
+                "failed_reason": "confirm_delivery_invalid_response",
+            }
+        success = bool(result.get("success"))
+        already_delivered = bool(result.get("already_delivered"))
+        message = str(result.get("message") or result.get("error") or result.get("failed_reason") or "")
+        failed_reason = "" if success else str(result.get("error") or result.get("failed_reason") or message or "confirm_delivery_failed")
+        return {
+            "success": success,
+            "status": "already_delivered" if already_delivered else ("confirmed" if success else "failed"),
+            "message": message,
+            "failed_reason": failed_reason,
+        }
+
+    def _record_platform_confirm_log(
+        self,
+        order: OrderInfo,
+        *,
+        config_id: int | None,
+        content: str,
+        confirm_result: dict,
+    ) -> None:
+        if confirm_result["success"]:
+            status = "platform_already_delivered" if confirm_result["status"] == "already_delivered" else "platform_confirmed"
+            failed_reason = ""
+        else:
+            status = "platform_confirm_failed"
+            failed_reason = confirm_result["failed_reason"]
+        self.store.record_delivery_log(
+            order_no=order.order_id,
+            chat_id=order.chat_id,
+            item_id=order.item_id,
+            buyer_id=order.buyer_id,
+            config_id=config_id,
+            content=content,
+            status=status,
+            failed_reason=failed_reason,
+        )
 
     async def _run_post_delivery_hook(self, order: OrderInfo, result: DeliveryResult, *, config_id: int | None) -> None:
         if not self.post_delivery_hook:

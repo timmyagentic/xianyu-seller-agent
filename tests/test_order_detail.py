@@ -138,3 +138,56 @@ def test_xianyu_apis_retries_order_detail_with_set_cookie_token(monkeypatch):
     assert len(calls) == 2
     assert calls[0]["params"]["sign"] == generate_sign(calls[0]["params"]["t"], "oldtoken", calls[0]["data"]["data"])
     assert calls[1]["params"]["sign"] == generate_sign(calls[1]["params"]["t"], "newtoken", calls[1]["data"]["data"])
+
+
+def test_xianyu_apis_confirm_delivery_posts_signed_dummy_consign_request():
+    api = XianyuApis()
+    api.session.cookies.set("_m_h5_tk", "token_123")
+    calls = []
+
+    class FakeResponse:
+        headers = {}
+        cookies = []
+
+        def json(self):
+            return {"ret": ["SUCCESS::调用成功"], "data": {"ok": True}}
+
+    def fake_post(url, params, data, headers=None):
+        calls.append({"url": url, "params": params, "data": data, "headers": headers})
+        return FakeResponse()
+
+    api.session.post = fake_post
+
+    result = api.confirm_delivery("1234567890126", item_id="item-1")
+
+    assert result["success"] is True
+    assert result["order_id"] == "1234567890126"
+    assert calls[0]["url"].endswith("/mtop.taobao.idle.logistic.consign.dummy/1.0/")
+    assert calls[0]["params"]["api"] == "mtop.taobao.idle.logistic.consign.dummy"
+    assert calls[0]["params"]["sign"]
+    assert json.loads(calls[0]["data"]["data"]) == {
+        "orderId": "1234567890126",
+        "tradeText": "",
+        "picList": [],
+        "newUnconsign": True,
+    }
+
+
+def test_xianyu_apis_confirm_delivery_treats_already_delivered_as_success():
+    api = XianyuApis()
+    api.session.cookies.set("_m_h5_tk", "token_123")
+
+    class FakeResponse:
+        headers = {}
+        cookies = []
+
+        def json(self):
+            return {"ret": ["FAIL_BIZ_ORDER_ALREADY_DELIVERY::订单已发货成功"]}
+
+    api.session.post = lambda url, params, data, headers=None: FakeResponse()
+
+    result = api.confirm_delivery("1234567890126")
+
+    assert result["success"] is True
+    assert result["already_delivered"] is True
+    assert "已发货" in result["message"]

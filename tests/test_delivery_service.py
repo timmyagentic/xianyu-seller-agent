@@ -17,6 +17,16 @@ class FakeSender:
         return True
 
 
+class FakeConfirmDelivery:
+    def __init__(self, results):
+        self.results = list(results)
+        self.calls = []
+
+    async def __call__(self, order):
+        self.calls.append(order)
+        return self.results.pop(0)
+
+
 def _order(quantity=1):
     return OrderInfo(
         order_id="order-1",
@@ -83,6 +93,95 @@ def test_delivery_service_runs_post_delivery_hook_after_success(tmp_path):
             "content": "content",
         }
     ]
+
+
+def test_delivery_service_confirms_platform_delivery_after_content_is_sent(tmp_path):
+    store = DeliveryStore(db_path=str(tmp_path / "delivery.db"))
+    store.add_config(item_id="item-1", name="文本", delivery_type="text", content="content")
+    sender = FakeSender()
+    confirmer = FakeConfirmDelivery([{"success": True, "message": "SUCCESS::调用成功"}])
+    hook_calls = []
+
+    async def post_delivery_hook(order, result):
+        hook_calls.append({"status": result.status, "platform": result.platform_confirm_status})
+
+    service = DeliveryService(
+        store=store,
+        send_message=sender,
+        enabled=True,
+        confirm_delivery=confirmer,
+        confirm_delivery_enabled=True,
+        post_delivery_hook=post_delivery_hook,
+    )
+
+    result = asyncio.run(service.deliver_order(_order()))
+
+    assert result.status == "sent"
+    assert result.platform_confirm_status == "confirmed"
+    assert sender.calls[0]["content"] == "content"
+    assert confirmer.calls[0].order_id == "order-1"
+    assert store.has_delivery_status("order-1", "platform_confirmed") is True
+    assert hook_calls == [{"status": "sent", "platform": "confirmed"}]
+
+
+def test_delivery_service_records_confirm_failure_without_relist_hook(tmp_path):
+    store = DeliveryStore(db_path=str(tmp_path / "delivery.db"))
+    store.add_config(item_id="item-1", name="文本", delivery_type="text", content="content")
+    sender = FakeSender()
+    confirmer = FakeConfirmDelivery([{"success": False, "error": "确认发货失败"}])
+    hook_calls = []
+
+    async def post_delivery_hook(order, result):
+        hook_calls.append(result.status)
+
+    service = DeliveryService(
+        store=store,
+        send_message=sender,
+        enabled=True,
+        confirm_delivery=confirmer,
+        confirm_delivery_enabled=True,
+        post_delivery_hook=post_delivery_hook,
+    )
+
+    result = asyncio.run(service.deliver_order(_order()))
+
+    assert result.status == "sent_confirm_failed"
+    assert result.platform_confirm_status == "failed"
+    assert result.platform_confirm_failed_reason == "确认发货失败"
+    assert store.has_sent_order("order-1") is True
+    assert store.has_delivery_status("order-1", "platform_confirm_failed") is True
+    assert hook_calls == []
+
+
+def test_delivery_service_retries_platform_confirm_for_already_sent_order_without_resending(tmp_path):
+    store = DeliveryStore(db_path=str(tmp_path / "delivery.db"))
+    config_id = store.add_config(item_id="item-1", name="文本", delivery_type="text", content="content")
+    store.record_delivery_log(
+        order_no="order-1",
+        chat_id="chat-1",
+        item_id="item-1",
+        buyer_id="buyer-1",
+        config_id=config_id,
+        content="content",
+        status="sent",
+    )
+    sender = FakeSender()
+    confirmer = FakeConfirmDelivery([{"success": True, "already_delivered": True, "message": "ORDER_ALREADY_DELIVERY"}])
+    service = DeliveryService(
+        store=store,
+        send_message=sender,
+        enabled=True,
+        confirm_delivery=confirmer,
+        confirm_delivery_enabled=True,
+    )
+
+    result = asyncio.run(service.deliver_order(_order()))
+
+    assert result.status == "already_sent"
+    assert result.platform_confirm_status == "already_delivered"
+    assert sender.calls == []
+    assert confirmer.calls[0].order_id == "order-1"
+    assert store.has_delivery_status("order-1", "platform_already_delivered") is True
 
 
 def test_delivery_skips_order_that_was_already_sent(tmp_path):

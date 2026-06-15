@@ -316,6 +316,28 @@ class DeliveryStore:
             ).fetchone()
         return row is not None
 
+    def has_delivery_status(self, order_no: str, status: str) -> bool:
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT 1 FROM delivery_logs WHERE order_no = ? AND status = ? LIMIT 1",
+                (order_no, status),
+            ).fetchone()
+        return row is not None
+
+    def has_platform_confirmed_order(self, order_no: str) -> bool:
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT 1
+                FROM delivery_logs
+                WHERE order_no = ?
+                  AND status IN ('platform_confirmed', 'platform_already_delivered')
+                LIMIT 1
+                """,
+                (order_no,),
+            ).fetchone()
+        return row is not None
+
     def record_delivery_log(
         self,
         *,

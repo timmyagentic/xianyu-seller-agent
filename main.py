@@ -85,6 +85,8 @@ class XianyuLive:
             send_message=self.send_delivery_message,
             enabled=os.getenv("AUTO_DELIVERY_ENABLED", "false").lower() == "true",
             post_delivery_hook=self.handle_post_delivery_relist,
+            confirm_delivery=self.confirm_platform_delivery,
+            confirm_delivery_enabled=os.getenv("AUTO_CONFIRM_DELIVERY_ENABLED", "false").lower() == "true",
         )
         self.order_detail_provider = self.fetch_order_detail_for_delivery
         
@@ -268,6 +270,17 @@ class XianyuLive:
         if isinstance(response, dict):
             return self.xianyu.parse_order_detail_response(response)
         return OrderDetail()
+
+    async def confirm_platform_delivery(self, order: OrderInfo):
+        """Confirm no-logistics delivery on Xianyu after delivery content is sent."""
+        confirm_delivery = getattr(self.xianyu, "confirm_delivery", None)
+        if not confirm_delivery:
+            return {"success": False, "error": "confirm_delivery_not_available"}
+        result = confirm_delivery(order.order_id, item_id=order.item_id)
+        if inspect.isawaitable(result):
+            result = await result
+        self.sync_runtime_cookies()
+        return result
 
     async def init(self, ws):
         # 如果没有token或者token过期，获取新token
@@ -652,7 +665,7 @@ class XianyuLive:
             order.chat_id,
             result.status,
         )
-        if result.status in {"sent", "already_sent"}:
+        if result.status in {"sent", "already_sent", "sent_confirm_failed", "already_sent_confirm_failed"}:
             await self.mark_message_read(websocket, incoming.chat_id, incoming.message_id)
         return result
 

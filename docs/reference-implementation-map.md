@@ -40,8 +40,9 @@
 | 发货日志 | `auto_delivery_handler.py` 的 `_record_delivery_log` 思路 | 已落地为 `delivery_logs` 基础表，不接入后台消息日志表 |
 | 禁止重复发货 | `can_auto_delivery`、`mark_delivery_sent`、锁相关逻辑 | 已用 `delivery_logs` 的订单发送记录实现幂等跳过 |
 | `data` 库存消费 | `auto_delivery_handler.py` 中 `consume_batch_data` 的业务意图 | 已用 SQLite 事务按订单数量预占库存行，发送成功标记 `sent`，失败保留为 `failed_retryable` 并支持同订单重试复用；本地 CLI 支持 `delivery inventory add/list` 管理一次性 key |
+| 闲鱼订单侧确认发货 | `shipping/confirm_service.py`、`internal.py`、`auto_delivery_handler.py` 中 `auto_confirm` / `confirm_before_send` / `send_before_confirm` 策略 | 已迁入轻量版无物流确认发货：预设内容发送成功后调用 `mtop.taobao.idle.logistic.consign.dummy`，`ORDER_ALREADY_DELIVERY` 或“已发货成功”按幂等成功处理；失败记录 `platform_confirm_failed` 并返回 `sent_confirm_failed`，不触发发货后自动重新上架；不迁入后台 API 路由、SQLAlchemy 配置和多平台通知 |
 
-暂不迁入：多级代理卡券、亦凡 API、免拼、自动确认发货、买家信用拦截、Redis 锁、后台通知。
+暂不迁入：多级代理卡券、亦凡 API、免拼、买家信用拦截、Redis 锁、后台通知。
 
 ## 重新上架
 
