@@ -46,6 +46,8 @@
 
 ## 重新上架
 
+当前绑定账号没有开通鱼小铺。迁移参考实现时，普通账号发布/重新发布以 `backend-web/app/services/xianyu_publisher.py` 的 `www.goofish.com/publish` 路径为主；`common/services/promotion_xianyu_publisher.py` 的 `seller.goofish.com` 路径只作为鱼小铺/返佣卖家参考，不作为默认入口。seller 工作台 `no-permission` 不应阻塞自动发货、订单确认、商品同步或普通重新发布预检。
+
 | 能力 | 参考文件 | 迁移说明 |
 | --- | --- | --- |
 | 商品同步和归属校验 | `xianyu-auto-reply/common/services/item_service.py`、`common/utils/item_info_manager.py`、`backend-web/app/api/routes/items.py` | 已参考 `fetch_all_items_from_account`、`get_item_list_info` 和 `/items/get-all-from-account` 思路；MVP 通过 `listing fetch-items` 调用 `mtop.idle.web.xyh.item.list` 同步在售商品到本地 SQLite `items` 快照表，并通过 `listing item-status` / `listing relist` 前置 `XianyuApis.get_item_status` 重新查询当前账号状态，未命中在售列表时使用商品详情接口兜底，区分 `active`、`inactive`、`sold`、`relistable` 等状态，不迁入 SQLAlchemy/Redis |
