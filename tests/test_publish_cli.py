@@ -22,6 +22,14 @@ class FakePublishExecutor:
         )
 
 
+class FakeConfiguredPublishExecutor:
+    instances = []
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        FakeConfiguredPublishExecutor.instances.append(self)
+
+
 def test_listing_publish_requires_explicit_real_publish_confirmation(tmp_path, monkeypatch, capsys):
     FakePublishExecutor.instances = []
     monkeypatch.setenv("COOKIES_STR", "unb=seller-1; _m_h5_tk=token_123")
@@ -88,3 +96,17 @@ def test_listing_publish_with_confirmation_invokes_executor_and_saves_snapshot(t
     assert snapshot is not None
     assert snapshot.title == "资料包"
     assert snapshot.status == "active"
+
+
+def test_publish_executor_uses_configured_publish_url(monkeypatch):
+    FakeConfiguredPublishExecutor.instances = []
+    monkeypatch.setenv("AUTO_PUBLISH_URL", "https://seller.goofish.com/?site=COMMONPRO#/seller-item/publish")
+    monkeypatch.setattr(main, "PlaywrightPublishExecutor", FakeConfiguredPublishExecutor)
+
+    executor = main._build_playwright_publish_executor(cookies_str="unb=seller-1", allow_playwright=True)
+
+    assert executor is FakeConfiguredPublishExecutor.instances[0]
+    assert (
+        FakeConfiguredPublishExecutor.instances[0].kwargs["publish_url"]
+        == "https://seller.goofish.com/?site=COMMONPRO#/seller-item/publish"
+    )

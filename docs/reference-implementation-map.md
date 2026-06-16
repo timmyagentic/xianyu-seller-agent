@@ -46,22 +46,22 @@
 
 ## 重新上架
 
-当前绑定账号没有开通鱼小铺。迁移参考实现时，普通账号发布/重新发布以 `backend-web/app/services/xianyu_publisher.py` 的 `www.goofish.com/publish` 路径为主；`common/services/promotion_xianyu_publisher.py` 的 `seller.goofish.com` 路径只作为鱼小铺/返佣卖家参考，不作为默认入口。seller 工作台 `no-permission` 不应阻塞自动发货、订单确认、商品同步或普通重新发布预检。
+当前绑定账号已经开通鱼小铺。迁移参考实现时，普通重新发布保留 `backend-web/app/services/xianyu_publisher.py` 的 `www.goofish.com/publish` 路径作为 fallback；多库存、鱼小铺发布和商品管理库存验证优先参考 `common/services/promotion_xianyu_publisher.py` 的 `seller.goofish.com` 路径。真实验证到当前可用的商品管理路由是 `seller-item/goods-manage`，旧的 `#/seller-item` 路由不可作为默认入口。
 
 | 能力 | 参考文件 | 迁移说明 |
 | --- | --- | --- |
 | 商品同步和归属校验 | `xianyu-auto-reply/common/services/item_service.py`、`common/utils/item_info_manager.py`、`backend-web/app/api/routes/items.py` | 已参考 `fetch_all_items_from_account`、`get_item_list_info` 和 `/items/get-all-from-account` 思路；MVP 通过 `listing fetch-items` 调用 `mtop.idle.web.xyh.item.list` 同步在售商品到本地 SQLite `items` 快照表，并通过 `listing item-status` / `listing relist` 前置 `XianyuApis.get_item_status` 重新查询当前账号状态，未命中在售列表时使用商品详情接口兜底，区分 `active`、`inactive`、`sold`、`relistable` 等状态，不迁入 SQLAlchemy/Redis |
 | 商品操作 API 调用模式 | `xianyu-auto-reply/promotion/backend/app/services/item_delete_api_service.py` | 已参考 mtop seller API 的签名、Cookie、`needLoginPC`、Set-Cookie 合并和 token 过期重试模式，落地为 `XIANYU_RELIST_API` 可配置调用边界；未硬编码未知重新上架接口，也不复用删除动作本身 |
-| Playwright 兜底浏览器控制 | `xianyu-auto-reply/common/services/promotion_xianyu_publisher.py`、`backend-web/app/services/xianyu_publisher.py` | 已落地 Cookie 域、闲鱼首页 -> 淘宝登录页 -> 普通发布页三段登录上下文预热；普通重新发布使用商品详情动作暴露的 `editScene=rePutOn` 路由，不默认进入 `seller.goofish.com` 鱼小铺/卖家工作台；保留库存输入选择器、登录/滑块/验证码/风控检测、`listing relist-preflight` 只读页面预检和授权浏览器重新上架执行器；preflight 会输出 URL、标题、状态标记和元素数量等安全页面证据，不输出完整页面正文；CLI 真实点击必须同时传入 `--allow-playwright --confirm-real-relist`，发货后后台 hook 必须设置 `AUTO_RELIST_CONFIRM_PLAYWRIGHT=true`；只有页面确认成功后才记录 `relisted` |
+| Playwright 兜底浏览器控制 | `xianyu-auto-reply/common/services/promotion_xianyu_publisher.py`、`backend-web/app/services/xianyu_publisher.py` | 已落地 Cookie 域、闲鱼/seller 首页 -> 淘宝登录页 -> 目标页三段登录上下文预热；普通重新发布使用 `editScene=rePutOn` 路由，鱼小铺多库存可通过 `AUTO_RELIST_MANAGEMENT_URL` 指向 `seller-item/goods-manage` 验证商品管理库存；保留库存输入选择器、登录/滑块/验证码/风控检测、`listing relist-preflight` 只读页面预检和授权浏览器重新上架执行器；目标库存存在但页面没有库存输入框时返回 `stock_input_not_found`，不点击发布；preflight 会输出 URL、标题、状态标记和元素数量等安全页面证据，不输出完整页面正文；CLI 真实点击必须同时传入 `--allow-playwright --confirm-real-relist`，发货后后台 hook 必须设置 `AUTO_RELIST_CONFIRM_PLAYWRIGHT=true`；只有页面确认成功后才记录 `relisted` |
 | 商品管理数量/状态判断 | `promotion/backend/app/services/publish_rule_scheduler.py`、`common/services/item_service.py` | 已基于商品快照状态、标题和 `item_id` 回查做 `already_active`、标题不匹配和归属失败判断 |
-| 目标库存字段 | `common/services/promotion_xianyu_publisher.py`、`promotion/backend/app/services/publish_rule_scheduler.py` | 已参考发布流程的 `stock` 字段，把重新上架目标库存保存为 `target_stock`，并通过 CLI、任务日志和可注入 API 边界传递；当前不会伪造平台库存修改成功 |
+| 目标库存字段 | `common/services/promotion_xianyu_publisher.py`、`promotion/backend/app/services/publish_rule_scheduler.py` | 已参考发布流程的 `stock` 字段，把重新上架目标库存保存为 `target_stock`，并通过 CLI、任务日志和可注入 API 边界传递；Playwright 路径必须真实找到库存输入框才会点击发布，否则记录 `stock_input_not_found` |
 | 上架后绑定发货内容 | `promotion/backend/app/services/publish_coupon_card_service.py` | 已改为 upsert 本地 `delivery_configs`，重新上架成功或已处于上架状态后绑定目标 `item_id` |
 
 ## 发布新商品
 
 | 能力 | 参考文件 | 迁移说明 |
 | --- | --- | --- |
-| 发布页登录上下文预热 | `xianyu-auto-reply/backend-web/app/services/xianyu_publisher.py`、`common/services/promotion_xianyu_publisher.py` | 普通发布已迁入闲鱼首页 -> 淘宝登录页 -> `www.goofish.com/publish` 三段跳转；`seller.goofish.com` 仅保留为鱼小铺/返佣卖家参考路径，不作为普通账号默认入口 |
+| 发布页登录上下文预热 | `xianyu-auto-reply/backend-web/app/services/xianyu_publisher.py`、`common/services/promotion_xianyu_publisher.py` | 普通发布保留闲鱼首页 -> 淘宝登录页 -> `www.goofish.com/publish` 三段跳转；鱼小铺发布可通过 `AUTO_PUBLISH_URL=https://seller.goofish.com/?site=COMMONPRO#/seller-item/publish` 启用 seller 发布页 |
 | 发布页字段填写 | `xianyu-auto-reply/common/services/promotion_xianyu_publisher.py`、`backend-web/app/services/xianyu_publisher.py` | 已迁入标题、描述、价格、库存、图片和发布按钮定位策略；不迁入素材库、地址池、分类兜底、返佣选品和后台批量调度 |
 | 发布结果确认 | `backend-web/app/services/xianyu_publisher.py` | 已参考跳转商品详情页、页面成功提示和失败提示判断；没有平台确认时返回 `publish_confirmation_missing`，不伪造成功 |
 

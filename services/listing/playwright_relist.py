@@ -44,7 +44,7 @@ STOCK_SELECTORS = (
     'xpath=//*[contains(normalize-space(.), "库存")]/following::input[1]',
     'xpath=//*[contains(normalize-space(.), "数量")]/following::input[1]',
 )
-RELIST_BUTTON_SELECTORS = (
+REPUTON_PUBLISH_BUTTON_SELECTORS = (
     '.publish-button--KBpTVopQ',
     'button.publish-button--KBpTVopQ',
     'button:has-text("发布")',
@@ -52,6 +52,8 @@ RELIST_BUTTON_SELECTORS = (
     'button.publish-btn',
     '.publish-btn button',
     'button[type="submit"]',
+)
+RELIST_BUTTON_SELECTORS = (
     'button:has-text("重新上架")',
     'a:has-text("重新上架")',
     '[role="button"]:has-text("重新上架")',
@@ -258,8 +260,15 @@ class PlaywrightRelistExecutor:
                 evidence=self._execution_evidence(pre_action_page=pre_action_page),
             )
 
-        if request.target_stock is not None:
-            await self._fill_stock(page, request.target_stock)
+        if request.target_stock is not None and not await self._fill_stock(page, request.target_stock):
+            screenshot_path = await self._save_screenshot(page, request.item_id, "stock_input_not_found")
+            return RelistApiResult(
+                success=False,
+                failed_reason="stock_input_not_found",
+                screenshot_path=screenshot_path,
+                response_summary="重新发布页未找到库存输入框，未执行发布点击",
+                evidence=self._execution_evidence(pre_action_page=pre_action_page),
+            )
 
         button = await self._find_relist_button(page, request)
         if not button:
@@ -343,21 +352,24 @@ class PlaywrightRelistExecutor:
         item_found = title_matches or item_id_matches
         button = await self._find_relist_button(page, request)
         button_found = bool(button)
+        publish_button_found = bool(await self._find_reputon_publish_button(page))
         stock_input_found = bool(await self._find_stock_input(page))
         screenshot_path = await self._save_screenshot(page, request.item_id, "preview")
+        stock_required_missing = request.target_stock is not None and not stock_input_found
+        success = item_found and button_found and not stock_required_missing
         return {
-            "success": item_found and button_found,
+            "success": success,
             "item_id": request.item_id,
             "expected_title": request.expected_title,
             "item_found": item_found,
             "title_found": title_matches,
             "item_id_found": item_id_matches,
             "relist_button_found": button_found,
-            "publish_button_found": button_found,
+            "publish_button_found": publish_button_found,
             "stock_input_found": stock_input_found,
             "would_fill_stock": request.target_stock,
             "screenshot_path": screenshot_path,
-            "failed_reason": "" if item_found and button_found else "preflight_not_actionable",
+            "failed_reason": "" if success else ("stock_input_not_found" if stock_required_missing else "preflight_not_actionable"),
             "response_summary": "preview only; no click or stock fill executed",
             "warmup_urls": self._warmup_urls(),
             "page_evidence": page_evidence,
@@ -398,10 +410,10 @@ class PlaywrightRelistExecutor:
             return "permission_required"
         return ""
 
-    async def _fill_stock(self, page, target_stock: int) -> None:
+    async def _fill_stock(self, page, target_stock: int) -> bool:
         stock_input = await self._find_stock_input(page)
         if not stock_input:
-            return
+            return False
         try:
             await stock_input.click()
         except Exception:
@@ -415,6 +427,7 @@ class PlaywrightRelistExecutor:
             except Exception:
                 pass
         await stock_input.fill(str(target_stock))
+        return True
 
     async def _find_stock_input(self, page):
         for selector in STOCK_SELECTORS:
@@ -449,11 +462,26 @@ class PlaywrightRelistExecutor:
                 ]
             )
         selectors.extend(RELIST_BUTTON_SELECTORS)
+        selectors.extend(self._reputon_publish_button_selectors(page))
         for selector in selectors:
             button = await self._query_selector(page, selector)
             if button and await self._element_visible(button) and await self._element_enabled(button):
                 return button
         return None
+
+    async def _find_reputon_publish_button(self, page):
+        for selector in self._reputon_publish_button_selectors(page):
+            button = await self._query_selector(page, selector)
+            if button and await self._element_visible(button) and await self._element_enabled(button):
+                return button
+        return None
+
+    def _reputon_publish_button_selectors(self, page) -> tuple[str, ...]:
+        return REPUTON_PUBLISH_BUTTON_SELECTORS if self._is_reputon_publish_route(page) else ()
+
+    def _is_reputon_publish_route(self, page) -> bool:
+        page_url = str(getattr(page, "url", "") or "").lower()
+        return "www.goofish.com/publish" in page_url and "editscene=reputon" in page_url
 
     async def _click_optional_confirm(self, page) -> None:
         for selector in CONFIRM_BUTTON_SELECTORS:

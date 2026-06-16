@@ -27,9 +27,9 @@
 
 ## 账号与平台约束
 
-当前项目绑定的闲鱼账号没有开通鱼小铺。因此默认实现必须按普通闲鱼账号路径设计和验证：发布和重新发布优先使用 `https://www.goofish.com/publish` 及 `editScene=rePutOn` 路由。`https://seller.goofish.com` 属于卖家工作台/鱼小铺/返佣卖家相关路径，出现 `no-permission` 不应被当作普通账号权限不足，也不应阻塞自动发货、订单确认、商品同步或普通重新发布预检。
+当前项目绑定的闲鱼账号已经开通鱼小铺。涉及平台侧多库存、商品管理库存列、鱼小铺发布能力时，应优先使用 `https://seller.goofish.com` 卖家工作台路径验证；普通重新发布仍可使用 `https://www.goofish.com/publish?itemId=...&editScene=rePutOn` 作为 fallback，但这个普通页面没有库存输入框时，不能继续点击发布并声称库存已同步。
 
-除非后续明确更换为已开通鱼小铺的账号，否则不要把鱼小铺能力作为依赖前提，不要把 seller 工作台作为普通重新发布或发布新商品的默认入口。普通账号页面没有库存输入框时，只能把目标库存保留在本地配置、任务审计和可注入 API 边界里，不要伪造平台侧库存修改成功。
+真实验证结果显示，鱼小铺商品管理入口是 `https://seller.goofish.com/?site=COMMONPRO#/seller-item/goods-manage`，可以看到商品 `1030573156061 / 智谱 GLM coding plan`、库存列和当前库存值；旧的 `#/seller-item` 会落到无效微应用，不应再作为默认商品管理路由。鱼小铺发布入口可配置为 `https://seller.goofish.com/?site=COMMONPRO#/seller-item/publish`，参考项目中该页面包含库存输入策略。后续如果更换为未开通鱼小铺的账号，再回退到普通账号路径。
 
 ## 参考项目职责
 
@@ -132,7 +132,7 @@ python main.py listing status
 
 `listing auto-relist set` 用于配置“发货成功后自动重新上架”的商品级策略。运行时还必须开启 `AUTO_RELIST_ENABLED=true`；否则配置只会保存，不会在付款发货后触发。
 
-Playwright 路径会参考 `xianyu-auto-reply` 的普通发布策略：先访问 `https://www.goofish.com`，再访问 `https://login.taobao.com/member/login.jhtml` 初始化登录上下文，最后进入 `https://www.goofish.com/publish` 发布页。`https://seller.goofish.com` 属于卖家工作台/鱼小铺或返佣卖家路径，普通账号没有鱼小铺时可能跳到 `no-permission`，不作为默认重新发布入口。`listing publish` 用于发布新商品。真实发布必须传入 `--confirm-real-publish`，并且必须提供标题、描述、价格、库存和至少一张本地图片路径；遇到登录、滑块、验证码、风控、权限不足、缺少字段、找不到发布按钮或发布后没有平台确认时只记录结构化失败，不伪造成功。
+Playwright 路径会参考 `xianyu-auto-reply` 的页面初始化策略：先访问闲鱼首页或 seller 首页，再访问 `https://login.taobao.com/member/login.jhtml` 初始化登录上下文，最后进入目标发布或商品管理页。当前账号已开通鱼小铺，多库存相关操作优先使用 seller 工作台；普通发布页仍可作为无库存要求的 fallback。`listing publish` 用于发布新商品。真实发布必须传入 `--confirm-real-publish`，并且必须提供标题、描述、价格、库存和至少一张本地图片路径；遇到登录、滑块、验证码、风控、权限不足、缺少字段、找不到发布按钮或发布后没有平台确认时只记录结构化失败，不伪造成功。
 
 `python main.py web` 会启动本地管理页面，提供总览、自动发货配置、自动重新上架配置、新商品发布和任务记录。页面参考 `xianyu-auto-reply` 的管理台布局，但保留为轻量静态前端和 Python 标准库 HTTP API，不迁入 React/FastAPI/MySQL/Redis。页面不会展示 Cookie/API Key；真实重新上架和真实发布都需要在页面中显式勾选确认。
 
@@ -154,6 +154,8 @@ Playwright 路径会参考 `xianyu-auto-reply` 的普通发布策略：先访问
 - `AUTO_RELIST_CONFIRM_PLAYWRIGHT=false`：发货后自动重新上架的真实浏览器点击确认开关；只有同时允许 Playwright 且该开关为 `true` 时，后台 hook 才会创建真实执行器。
 - `AUTO_RELIST_SCREENSHOT_DIR=data/relist-screenshots`：授权浏览器路径保存页面证据的本地目录，默认不提交。
 - `AUTO_RELIST_PLAYWRIGHT_HEADLESS=true`：重新上架浏览器执行器是否无头运行；也兼容旧的 `PLAYWRIGHT_HEADLESS`。
+- `AUTO_RELIST_MANAGEMENT_URL=`：可选覆盖重新上架 Playwright 目标页。鱼小铺多库存排查可设为 `https://seller.goofish.com/?site=COMMONPRO#/seller-item/goods-manage`；普通重新发布 fallback 为空即可使用 `www.goofish.com/publish?itemId=...&editScene=rePutOn`。
+- `AUTO_PUBLISH_URL=`：可选覆盖新商品发布 Playwright 目标页。鱼小铺发布可设为 `https://seller.goofish.com/?site=COMMONPRO#/seller-item/publish`；为空时使用普通 `www.goofish.com/publish`。
 - `AUTO_PUBLISH_SCREENSHOT_DIR=data/publish-screenshots`：发布新商品浏览器路径保存页面证据的本地目录，默认不提交。
 - `AUTO_PUBLISH_PLAYWRIGHT_HEADLESS=true`：发布新商品浏览器执行器是否无头运行；也兼容旧的 `PLAYWRIGHT_HEADLESS`。
 

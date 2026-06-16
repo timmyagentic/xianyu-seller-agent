@@ -1037,10 +1037,15 @@ def _build_playwright_relist_executor(*, cookies_str: str, allow_playwright: boo
         return None
     screenshot_dir = os.getenv("AUTO_RELIST_SCREENSHOT_DIR", "data/relist-screenshots")
     headless = os.getenv("AUTO_RELIST_PLAYWRIGHT_HEADLESS", os.getenv("PLAYWRIGHT_HEADLESS", "true")).lower() != "false"
+    management_url = os.getenv("AUTO_RELIST_MANAGEMENT_URL", "").strip()
+    kwargs = {}
+    if management_url:
+        kwargs["management_url"] = management_url
     return PlaywrightRelistExecutor(
         cookies_str=cookies_str,
         headless=headless,
         screenshot_dir=screenshot_dir,
+        **kwargs,
     )
 
 
@@ -1049,10 +1054,15 @@ def _build_playwright_publish_executor(*, cookies_str: str, allow_playwright: bo
         return None
     screenshot_dir = os.getenv("AUTO_PUBLISH_SCREENSHOT_DIR", "data/publish-screenshots")
     headless = os.getenv("AUTO_PUBLISH_PLAYWRIGHT_HEADLESS", os.getenv("PLAYWRIGHT_HEADLESS", "true")).lower() != "false"
+    publish_url = os.getenv("AUTO_PUBLISH_URL", "").strip()
+    kwargs = {}
+    if publish_url:
+        kwargs["publish_url"] = publish_url
     return PlaywrightPublishExecutor(
         cookies_str=cookies_str,
         headless=headless,
         screenshot_dir=screenshot_dir,
+        **kwargs,
     )
 
 

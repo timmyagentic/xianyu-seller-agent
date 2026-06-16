@@ -37,6 +37,6 @@ python main.py
 
 ## 账号与平台约束
 
-当前绑定的闲鱼账号没有开通鱼小铺。发布和重新发布功能必须默认按普通闲鱼账号路径实现：先访问 `https://www.goofish.com` 和淘宝登录页初始化上下文，再进入 `https://www.goofish.com/publish` 或 `editScene=rePutOn` 重新发布路由。`https://seller.goofish.com` 属于卖家工作台/鱼小铺/返佣卖家路径，普通账号访问出现 `no-permission` 是预期现象，不应作为自动发货、订单确认、商品同步或普通重新发布预检的阻塞条件。
+当前绑定的闲鱼账号已经开通鱼小铺。发布、重新发布和多库存相关能力必须同时考虑普通闲鱼发布页和 seller 工作台：无库存要求的重新发布可使用 `https://www.goofish.com/publish?itemId=...&editScene=rePutOn`；涉及平台侧库存、鱼小铺商品管理和多库存验证时，优先使用 `https://seller.goofish.com/?site=COMMONPRO#/seller-item/goods-manage` 或 `#/seller-item/publish`。
 
-除非需求明确切换为已开通鱼小铺的账号，不要把 seller 工作台或鱼小铺库存字段作为默认依赖；普通账号页面没有库存输入框时，只记录本地目标库存和审计证据，不要伪造平台侧库存修改成功。
+目标库存存在时，Playwright 执行器必须真实找到并填写库存输入框，找不到库存输入框时返回结构化失败，不要继续点击发布或伪造平台侧库存修改成功。旧的 `#/seller-item` 路由不是当前可用的商品管理页；不要把它作为默认 seller 路由。

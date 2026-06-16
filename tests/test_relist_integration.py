@@ -122,6 +122,35 @@ def test_listing_relist_confirm_real_relist_creates_authorized_executor(tmp_path
     assert FakePlaywrightExecutor.instances[0].kwargs["cookies_str"]
 
 
+def test_listing_relist_executor_uses_configured_management_url(tmp_path, monkeypatch, capsys):
+    FakeRelistService.instances = []
+    FakePlaywrightExecutor.instances = []
+    monkeypatch.setenv("COOKIES_STR", "unb=seller-1; _m_h5_tk=token_123")
+    monkeypatch.setenv("AUTO_RELIST_MANAGEMENT_URL", "https://seller.goofish.com/?site=COMMONPRO#/seller-item/goods-manage")
+    monkeypatch.setattr(main, "XianyuApis", FakeApi)
+    monkeypatch.setattr(main, "RelistService", FakeRelistService)
+    monkeypatch.setattr(main, "PlaywrightRelistExecutor", FakePlaywrightExecutor)
+
+    exit_code = run_cli(
+        [
+            "listing",
+            "--db-path",
+            str(tmp_path / "listing.db"),
+            "relist",
+            "--item-id",
+            "item-1",
+            "--allow-playwright",
+            "--confirm-real-relist",
+        ]
+    )
+
+    assert exit_code == 0
+    assert (
+        FakePlaywrightExecutor.instances[0].kwargs["management_url"]
+        == "https://seller.goofish.com/?site=COMMONPRO#/seller-item/goods-manage"
+    )
+
+
 def test_listing_relist_preflight_uses_live_status_and_preview_executor(tmp_path, monkeypatch, capsys):
     FakePlaywrightExecutor.instances = []
 
