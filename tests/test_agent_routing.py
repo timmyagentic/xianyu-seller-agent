@@ -143,6 +143,26 @@ def test_intent_router_detects_price_without_llm():
     assert classifier.calls == []
 
 
+def test_intent_router_detects_common_discount_phrases_without_llm():
+    classifier = FakeClassifyAgent("default")
+    router = IntentRouter(classifier)
+
+    for message in [
+        "能优惠一点吗",
+        "有折扣吗",
+        "预算不够",
+        "能刀吗",
+        "学生党可以便宜吗",
+        "最低多少",
+        "能少一点吗",
+        "再低点可以吗",
+        "能让一点吗",
+        "打折吗",
+    ]:
+        assert router.detect(message, "商品", "") == "price"
+    assert classifier.calls == []
+
+
 def test_intent_router_falls_back_to_classifier():
     classifier = FakeClassifyAgent("no_reply")
     router = IntentRouter(classifier)
@@ -158,7 +178,27 @@ def test_reply_bot_safe_filter_blocks_off_platform_terms():
     assert bot._safe_filter("平台内沟通即可") == "平台内沟通即可"
 
 
-def test_reply_bot_generate_reply_uses_router_and_bargain_count():
+def test_reply_bot_refuses_discount_by_default_without_calling_price_agent(monkeypatch):
+    monkeypatch.delenv("NO_BARGAIN_MODE", raising=False)
+    bot = XianyuReplyBot.__new__(XianyuReplyBot)
+    bot.router = FakeRouter("price")
+    bot.agents = {
+        "classify": FakeReplyAgent("unused"),
+        "price": FakeReplyAgent("最低 10 元"),
+        "tech": FakeReplyAgent("tech"),
+        "default": FakeReplyAgent("default"),
+    }
+    bot.last_intent = None
+
+    reply = bot.generate_reply("能便宜点吗，我马上拍", "商品信息", [])
+
+    assert reply == "这个价格不议，当前标价就是最终价格。如能接受，可以直接拍。"
+    assert bot.last_intent == "price"
+    assert bot.agents["price"].calls == []
+
+
+def test_reply_bot_generate_reply_uses_router_and_bargain_count(monkeypatch):
+    monkeypatch.setenv("NO_BARGAIN_MODE", "false")
     bot = XianyuReplyBot.__new__(XianyuReplyBot)
     bot.router = FakeRouter("price")
     bot.agents = {
