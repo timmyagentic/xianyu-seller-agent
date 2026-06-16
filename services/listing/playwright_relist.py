@@ -1,0 +1,653 @@
+from dataclasses import dataclass
+from http.cookies import SimpleCookie
+from pathlib import Path
+from typing import Callable
+
+from .playwright_browser_options import (
+    ANTI_DETECTION_INIT_SCRIPT,
+    build_browser_context_options,
+    build_browser_launch_options,
+)
+from .models import RelistApiResult, RelistRequest
+
+
+SELLER_HOME_URL = "https://www.goofish.com"
+LOGIN_CONTEXT_URL = "https://login.taobao.com/member/login.jhtml"
+SELLER_MANAGEMENT_URL = "https://www.goofish.com/publish?itemId={item_id}&editScene=rePutOn"
+COOKIE_DOMAINS = (".goofish.com", ".taobao.com", ".alipay.com")
+RISK_CONTROL_SELECTORS = (".nc-container", "#nc_1_n1z", ".captcha-container", ".nc_scale")
+RISK_CONTROL_KEYWORDS = (
+    "滑块",
+    "验证码",
+    "captcha",
+    "nc_1_n1z",
+    "风控",
+    "请拖动",
+    "请按住",
+    "非法访问",
+    "正常浏览器",
+    "保障您的体验",
+)
+LOGIN_KEYWORDS = ("请登录", "扫码登录", "login.taobao.com", "密码登录")
+PERMISSION_KEYWORDS = ("暂无权限", "无权限", "没有权限", "no-permission")
+SUCCESS_KEYWORDS = ("操作成功", "重新上架成功", "上架成功", "已上架", "发布成功", "已发布", "在售")
+MANAGEMENT_KEYWORDS = ("发闲置", "宝贝图片", "宝贝描述", "价格", "发布", "商品管理", "在售", "下架", "卖掉了", "宝贝")
+STOCK_SELECTORS = (
+    'input[placeholder*="库存"]',
+    'input[aria-label*="库存"]',
+    'input[placeholder*="数量"]',
+    'input[aria-label*="数量"]',
+    'input[name*="stock"]',
+    'input[id*="stock"]',
+    '[class*="stock"] input',
+    '[class*="inventory"] input',
+    'xpath=//*[contains(normalize-space(.), "库存")]/following::input[1]',
+    'xpath=//*[contains(normalize-space(.), "数量")]/following::input[1]',
+)
+REPUTON_PUBLISH_BUTTON_SELECTORS = (
+    '.publish-button--KBpTVopQ',
+    'button.publish-button--KBpTVopQ',
+    'button:has-text("发布")',
+    'button:has-text("立即发布")',
+    'button.publish-btn',
+    '.publish-btn button',
+    'button[type="submit"]',
+)
+RELIST_BUTTON_SELECTORS = (
+    'button:has-text("重新上架")',
+    'a:has-text("重新上架")',
+    '[role="button"]:has-text("重新上架")',
+    'button:has-text("恢复上架")',
+    'a:has-text("恢复上架")',
+    '[role="button"]:has-text("恢复上架")',
+    'button:has-text("上架")',
+    'a:has-text("上架")',
+    '[role="button"]:has-text("上架")',
+)
+CONFIRM_BUTTON_SELECTORS = (
+    'button:has-text("确定")',
+    'button:has-text("确认")',
+    '[role="button"]:has-text("确定")',
+    '[role="button"]:has-text("确认")',
+)
+
+
+@dataclass(frozen=True)
+class PlaywrightRelistCommand:
+    item_id: str
+    expected_title: str
+    target_stock: int | None
+    management_url: str
+    cookie_domains: tuple[str, ...]
+
+
+def build_playwright_relist_command(
+    *,
+    item_id: str,
+    expected_title: str = "",
+    target_stock: int | None = None,
+    management_url: str = SELLER_MANAGEMENT_URL,
+) -> PlaywrightRelistCommand:
+    return PlaywrightRelistCommand(
+        item_id=str(item_id),
+        expected_title=str(expected_title or ""),
+        target_stock=target_stock,
+        management_url=management_url,
+        cookie_domains=COOKIE_DOMAINS,
+    )
+
+
+class PlaywrightRelistExecutor:
+    """Use an already-authorized browser session to re-publish a sold item.
+
+    This executor intentionally stops on login, slider, captcha, or missing
+    page confirmation. It never tries to solve platform risk controls.
+    """
+
+    def __init__(
+        self,
+        *,
+        cookies_str: str,
+        headless: bool = True,
+        management_url: str = SELLER_MANAGEMENT_URL,
+        timeout_ms: int = 30000,
+        screenshot_dir: str | None = None,
+        page_provider: Callable[[], object] | None = None,
+    ):
+        self.cookies_str = cookies_str
+        self.headless = headless
+        self.management_url = management_url
+        self.timeout_ms = timeout_ms
+        self.screenshot_dir = Path(screenshot_dir) if screenshot_dir else None
+        self.page_provider = page_provider
+
+    async def relist(self, request: RelistRequest) -> RelistApiResult:
+        if not self.cookies_str:
+            return RelistApiResult(
+                success=False,
+                failed_reason="cookie_missing",
+                response_summary="COOKIES_STR is required for Playwright relist",
+            )
+
+        if self.page_provider:
+            page = self.page_provider()
+            return await self._execute_on_page(page, request)
+
+        try:
+            from playwright.async_api import async_playwright
+        except Exception as exc:
+            return RelistApiResult(
+                success=False,
+                failed_reason="playwright_unavailable",
+                response_summary=f"Playwright is unavailable: {exc}",
+            )
+
+        playwright = None
+        browser = None
+        context = None
+        try:
+            playwright = await async_playwright().start()
+            browser = await playwright.chromium.launch(**build_browser_launch_options(headless=self.headless))
+            context = await browser.new_context(**build_browser_context_options())
+            await context.add_cookies(self._build_cookie_payload())
+            page = await context.new_page()
+            await self._add_anti_detection_script(page)
+            return await self._execute_on_page(page, request)
+        except Exception as exc:
+            return RelistApiResult(
+                success=False,
+                failed_reason="playwright_relist_exception",
+                response_summary=str(exc),
+            )
+        finally:
+            for resource in (context, browser):
+                if resource:
+                    try:
+                        await resource.close()
+                    except Exception:
+                        pass
+            if playwright:
+                try:
+                    await playwright.stop()
+                except Exception:
+                    pass
+
+    async def preview(self, request: RelistRequest) -> dict:
+        """Open the management page and report whether relist looks actionable.
+
+        This method is intentionally read-only: it never fills stock, clicks the
+        relist button, or confirms dialogs. Use it before asking for permission
+        to run the real relist path.
+        """
+        if not self.cookies_str:
+            return {
+                "success": False,
+                "failed_reason": "cookie_missing",
+                "response_summary": "COOKIES_STR is required for Playwright relist preview",
+            }
+
+        if self.page_provider:
+            page = self.page_provider()
+            return await self._preview_on_page(page, request)
+
+        try:
+            from playwright.async_api import async_playwright
+        except Exception as exc:
+            return {
+                "success": False,
+                "failed_reason": "playwright_unavailable",
+                "response_summary": f"Playwright is unavailable: {exc}",
+            }
+
+        playwright = None
+        browser = None
+        context = None
+        try:
+            playwright = await async_playwright().start()
+            browser = await playwright.chromium.launch(**build_browser_launch_options(headless=self.headless))
+            context = await browser.new_context(**build_browser_context_options())
+            await context.add_cookies(self._build_cookie_payload())
+            page = await context.new_page()
+            await self._add_anti_detection_script(page)
+            return await self._preview_on_page(page, request)
+        except Exception as exc:
+            return {
+                "success": False,
+                "failed_reason": "playwright_preview_exception",
+                "response_summary": str(exc),
+            }
+        finally:
+            for resource in (context, browser):
+                if resource:
+                    try:
+                        await resource.close()
+                    except Exception:
+                        pass
+            if playwright:
+                try:
+                    await playwright.stop()
+                except Exception:
+                    pass
+
+    async def _execute_on_page(self, page, request: RelistRequest) -> RelistApiResult:
+        await self._open_management_page_with_cookie(page, request)
+
+        page_text = await self._body_text(page)
+        pre_action_page = await self._page_evidence(page, page_text, request)
+        risk_reason = await self._detect_blocker(page, page_text)
+        if risk_reason:
+            screenshot_path = await self._save_screenshot(page, request.item_id, risk_reason)
+            return RelistApiResult(
+                success=False,
+                failed_reason=risk_reason,
+                screenshot_path=screenshot_path,
+                response_summary=self._blocker_summary(risk_reason),
+                evidence=self._execution_evidence(pre_action_page=pre_action_page),
+            )
+
+        if request.expected_title and request.expected_title not in page_text:
+            return RelistApiResult(
+                success=False,
+                failed_reason="title_not_found",
+                response_summary=f"重新发布页未找到期望标题: {request.expected_title}",
+                evidence=self._execution_evidence(pre_action_page=pre_action_page),
+            )
+        if request.item_id not in page_text and request.expected_title not in page_text:
+            return RelistApiResult(
+                success=False,
+                failed_reason="item_not_found_on_page",
+                response_summary=f"重新发布页未找到商品: {request.item_id}",
+                evidence=self._execution_evidence(pre_action_page=pre_action_page),
+            )
+
+        if request.target_stock is not None and not await self._fill_stock(page, request.target_stock):
+            screenshot_path = await self._save_screenshot(page, request.item_id, "stock_input_not_found")
+            return RelistApiResult(
+                success=False,
+                failed_reason="stock_input_not_found",
+                screenshot_path=screenshot_path,
+                response_summary="重新发布页未找到库存输入框，未执行发布点击",
+                evidence=self._execution_evidence(pre_action_page=pre_action_page),
+            )
+
+        button = await self._find_relist_button(page, request)
+        if not button:
+            screenshot_path = await self._save_screenshot(page, request.item_id, "relist_button_not_found")
+            return RelistApiResult(
+                success=False,
+                failed_reason="relist_button_not_found",
+                screenshot_path=screenshot_path,
+                response_summary="重新发布页未找到发布按钮",
+                evidence=self._execution_evidence(pre_action_page=pre_action_page),
+            )
+
+        await button.click()
+        await self._click_optional_confirm(page)
+        try:
+            await page.wait_for_timeout(1000)
+        except Exception:
+            pass
+
+        page_text_after = await self._body_text(page)
+        post_action_page = await self._page_evidence(page, page_text_after, request)
+        risk_reason = await self._detect_blocker(page, page_text_after)
+        if risk_reason:
+            screenshot_path = await self._save_screenshot(page, request.item_id, risk_reason)
+            return RelistApiResult(
+                success=False,
+                failed_reason=risk_reason,
+                screenshot_path=screenshot_path,
+                response_summary=self._blocker_summary(risk_reason),
+                evidence=self._execution_evidence(
+                    pre_action_page=pre_action_page,
+                    post_action_page=post_action_page,
+                ),
+            )
+        current_url = str(getattr(page, "url", "") or "")
+        if self._is_relist_success(current_url, page_text_after, request):
+            screenshot_path = await self._save_screenshot(page, request.item_id, "relisted")
+            return RelistApiResult(
+                success=True,
+                final_status="active",
+                item_url=current_url,
+                screenshot_path=screenshot_path,
+                response_summary=page_text_after[:800],
+                evidence=self._execution_evidence(
+                    pre_action_page=pre_action_page,
+                    post_action_page=post_action_page,
+                ),
+            )
+
+        screenshot_path = await self._save_screenshot(page, request.item_id, "confirmation_missing")
+        return RelistApiResult(
+            success=False,
+            failed_reason="relist_confirmation_missing",
+            screenshot_path=screenshot_path,
+            response_summary=page_text_after[:800] or "重新上架点击后未检测到平台确认结果",
+            evidence=self._execution_evidence(
+                pre_action_page=pre_action_page,
+                post_action_page=post_action_page,
+            ),
+        )
+
+    async def _preview_on_page(self, page, request: RelistRequest) -> dict:
+        await self._open_management_page_with_cookie(page, request)
+
+        page_text = await self._body_text(page)
+        page_evidence = await self._page_evidence(page, page_text, request)
+        risk_reason = await self._detect_blocker(page, page_text)
+        if risk_reason:
+            screenshot_path = await self._save_screenshot(page, request.item_id, f"preview-{risk_reason}")
+            return {
+                "success": False,
+                "failed_reason": risk_reason,
+                "screenshot_path": screenshot_path,
+                "response_summary": self._blocker_summary(risk_reason),
+                "warmup_urls": self._warmup_urls(),
+                "page_evidence": page_evidence,
+            }
+
+        title_matches = bool(request.expected_title and request.expected_title in page_text)
+        item_id_matches = bool(request.item_id and request.item_id in page_text)
+        item_found = title_matches or item_id_matches
+        button = await self._find_relist_button(page, request)
+        button_found = bool(button)
+        publish_button_found = bool(await self._find_reputon_publish_button(page))
+        stock_input_found = bool(await self._find_stock_input(page))
+        screenshot_path = await self._save_screenshot(page, request.item_id, "preview")
+        stock_required_missing = request.target_stock is not None and not stock_input_found
+        success = item_found and button_found and not stock_required_missing
+        return {
+            "success": success,
+            "item_id": request.item_id,
+            "expected_title": request.expected_title,
+            "item_found": item_found,
+            "title_found": title_matches,
+            "item_id_found": item_id_matches,
+            "relist_button_found": button_found,
+            "publish_button_found": publish_button_found,
+            "stock_input_found": stock_input_found,
+            "would_fill_stock": request.target_stock,
+            "screenshot_path": screenshot_path,
+            "failed_reason": "" if success else ("stock_input_not_found" if stock_required_missing else "preflight_not_actionable"),
+            "response_summary": "preview only; no click or stock fill executed",
+            "warmup_urls": self._warmup_urls(),
+            "page_evidence": page_evidence,
+        }
+
+    async def _open_management_page_with_cookie(self, page, request: RelistRequest) -> None:
+        await page.goto(SELLER_HOME_URL, wait_until="domcontentloaded", timeout=self.timeout_ms)
+        await self._wait(page, 1000)
+        await page.goto(LOGIN_CONTEXT_URL, wait_until="domcontentloaded", timeout=self.timeout_ms)
+        await self._wait(page, 1000)
+        await page.goto(self._relist_url(request), wait_until="domcontentloaded", timeout=self.timeout_ms)
+        try:
+            await page.wait_for_load_state("networkidle", timeout=5000)
+        except Exception:
+            pass
+        await self._wait(page, 3000)
+        await self._wait_for_publish_form(page)
+
+    def _relist_url(self, request: RelistRequest) -> str:
+        if "{item_id}" in self.management_url:
+            return self.management_url.format(item_id=request.item_id)
+        return self.management_url
+
+    async def _detect_blocker(self, page, page_text: str) -> str:
+        page_url = str(getattr(page, "url", "") or "").lower()
+        if "no-permission" in page_url:
+            return "permission_required"
+        for selector in RISK_CONTROL_SELECTORS:
+            element = await self._query_selector(page, selector)
+            if element and await self._element_visible(element):
+                return "risk_control"
+        lower_text = page_text.lower()
+        if any(keyword.lower() in lower_text for keyword in RISK_CONTROL_KEYWORDS):
+            return "risk_control"
+        if any(keyword.lower() in lower_text for keyword in LOGIN_KEYWORDS):
+            return "login_required"
+        if any(keyword.lower() in lower_text for keyword in PERMISSION_KEYWORDS):
+            return "permission_required"
+        return ""
+
+    async def _fill_stock(self, page, target_stock: int) -> bool:
+        stock_input = await self._find_stock_input(page)
+        if not stock_input:
+            return False
+        try:
+            await stock_input.click()
+        except Exception:
+            pass
+        try:
+            await stock_input.fill("")
+        except Exception:
+            try:
+                await stock_input.press("Control+A")
+                await stock_input.press("Backspace")
+            except Exception:
+                pass
+        await stock_input.fill(str(target_stock))
+        return True
+
+    async def _find_stock_input(self, page):
+        for selector in STOCK_SELECTORS:
+            stock_input = await self._query_selector(page, selector)
+            if not stock_input:
+                continue
+            if not await self._element_visible(stock_input) or not await self._element_enabled(stock_input):
+                continue
+            return stock_input
+        return None
+
+    async def _find_relist_button(self, page, request: RelistRequest):
+        selectors = []
+        if request.item_id:
+            selectors.extend(
+                [
+                    (
+                        f'xpath=//*[contains(normalize-space(.), "{request.item_id}")]'
+                        '//*[self::button or self::a or @role="button"]'
+                        '[contains(normalize-space(.), "重新上架") or contains(normalize-space(.), "恢复上架")]'
+                    )
+                ]
+            )
+        if request.expected_title:
+            selectors.extend(
+                [
+                    (
+                        f'xpath=//*[contains(normalize-space(.), "{request.expected_title}")]'
+                        '//*[self::button or self::a or @role="button"]'
+                        '[contains(normalize-space(.), "重新上架") or contains(normalize-space(.), "恢复上架")]'
+                    )
+                ]
+            )
+        selectors.extend(RELIST_BUTTON_SELECTORS)
+        selectors.extend(self._reputon_publish_button_selectors(page))
+        for selector in selectors:
+            button = await self._query_selector(page, selector)
+            if button and await self._element_visible(button) and await self._element_enabled(button):
+                return button
+        return None
+
+    async def _find_reputon_publish_button(self, page):
+        for selector in self._reputon_publish_button_selectors(page):
+            button = await self._query_selector(page, selector)
+            if button and await self._element_visible(button) and await self._element_enabled(button):
+                return button
+        return None
+
+    def _reputon_publish_button_selectors(self, page) -> tuple[str, ...]:
+        return REPUTON_PUBLISH_BUTTON_SELECTORS if self._is_reputon_publish_route(page) else ()
+
+    def _is_reputon_publish_route(self, page) -> bool:
+        page_url = str(getattr(page, "url", "") or "").lower()
+        return "www.goofish.com/publish" in page_url and "editscene=reputon" in page_url
+
+    async def _click_optional_confirm(self, page) -> None:
+        for selector in CONFIRM_BUTTON_SELECTORS:
+            button = await self._query_selector(page, selector)
+            if not button:
+                continue
+            if await self._element_visible(button) and await self._element_enabled(button):
+                await button.click()
+                return
+
+    async def _query_selector(self, page, selector: str):
+        try:
+            return await page.query_selector(selector)
+        except Exception:
+            return None
+
+    async def _element_visible(self, element) -> bool:
+        try:
+            return bool(await element.is_visible())
+        except Exception:
+            return True
+
+    async def _element_enabled(self, element) -> bool:
+        try:
+            return bool(await element.is_enabled())
+        except Exception:
+            return True
+
+    async def _body_text(self, page) -> str:
+        try:
+            return await page.text_content("body") or ""
+        except Exception:
+            return ""
+
+    async def _page_evidence(self, page, page_text: str, request: RelistRequest) -> dict:
+        """Return safe page diagnostics without exposing full page text."""
+        page_url = str(getattr(page, "url", "") or "")
+        title = ""
+        try:
+            title = str(await page.title() or "")
+        except Exception:
+            title = ""
+
+        lower_text = page_text.lower()
+        lower_url = page_url.lower()
+        markers: list[str] = []
+        if "seller-item" in lower_url:
+            markers.append("seller_item_route")
+        if "publish" in lower_url and "editscene=reputon" in lower_url:
+            markers.append("reputon_publish_route")
+        if any(keyword.lower() in lower_text or keyword.lower() in lower_url for keyword in LOGIN_KEYWORDS):
+            markers.append("login_text")
+        if any(keyword.lower() in lower_text or keyword.lower() in lower_url for keyword in PERMISSION_KEYWORDS):
+            markers.append("permission_text")
+        if any(keyword.lower() in lower_text for keyword in RISK_CONTROL_KEYWORDS):
+            markers.append("risk_control_text")
+        if any(keyword in page_text for keyword in MANAGEMENT_KEYWORDS):
+            markers.append("management_text")
+        if request.item_id and request.item_id in page_text:
+            markers.append("item_id_text")
+        if request.expected_title and request.expected_title in page_text:
+            markers.append("expected_title_text")
+        if any(keyword in page_text for keyword in ("重新上架", "恢复上架", "上架")):
+            markers.append("relist_text")
+        if any(keyword in page_text for keyword in ("发布", "发闲置")):
+            markers.append("publish_text")
+
+        return {
+            "url": page_url[:300],
+            "title": title[:120],
+            "body_text_length": len(page_text),
+            "detected_markers": markers,
+            "element_counts": {
+                "input": await self._selector_count(page, "input"),
+                "button": await self._selector_count(page, "button"),
+            },
+            "stock_input_found": bool(await self._find_stock_input(page)),
+        }
+
+    async def _selector_count(self, page, selector: str) -> int:
+        try:
+            return len(await page.query_selector_all(selector))
+        except Exception:
+            return 0
+
+    def _is_relist_success(self, current_url: str, page_text: str, request: RelistRequest) -> bool:
+        if request.item_id and (
+            f"/item/{request.item_id}" in current_url or f"id={request.item_id}" in current_url
+        ):
+            return True
+        return any(keyword in page_text for keyword in SUCCESS_KEYWORDS)
+
+    async def _wait_for_publish_form(self, page) -> None:
+        element_count = (
+            await self._selector_count(page, "input")
+            + await self._selector_count(page, "button")
+            + await self._selector_count(page, "textarea")
+        )
+        if element_count > 0:
+            return
+        try:
+            await page.wait_for_selector("input, button, textarea", timeout=max(self.timeout_ms, 30000))
+        except Exception:
+            pass
+
+    def _execution_evidence(self, *, pre_action_page: dict, post_action_page: dict | None = None) -> dict:
+        evidence = {
+            "executor": "playwright",
+            "management_url": self.management_url,
+            "warmup_urls": self._warmup_urls(),
+            "pre_action_page": pre_action_page,
+        }
+        if post_action_page is not None:
+            evidence["post_action_page"] = post_action_page
+        return evidence
+
+    def _warmup_urls(self) -> list[str]:
+        return [SELLER_HOME_URL, LOGIN_CONTEXT_URL, self.management_url]
+
+    async def _wait(self, page, ms: int) -> None:
+        try:
+            await page.wait_for_timeout(ms)
+        except Exception:
+            pass
+
+    async def _add_anti_detection_script(self, page) -> None:
+        try:
+            await page.add_init_script(ANTI_DETECTION_INIT_SCRIPT)
+        except Exception:
+            pass
+
+    async def _save_screenshot(self, page, item_id: str, suffix: str) -> str:
+        if not self.screenshot_dir:
+            return ""
+        self.screenshot_dir.mkdir(parents=True, exist_ok=True)
+        safe_suffix = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in suffix)
+        path = self.screenshot_dir / f"relist-{item_id}-{safe_suffix}.png"
+        try:
+            await page.screenshot(path=str(path), full_page=True)
+            return str(path)
+        except Exception:
+            return ""
+
+    def _build_cookie_payload(self) -> list[dict[str, str]]:
+        parsed = SimpleCookie()
+        parsed.load(self.cookies_str)
+        payload = []
+        for name, morsel in parsed.items():
+            if not name or morsel.value is None:
+                continue
+            for domain in COOKIE_DOMAINS:
+                payload.append(
+                    {
+                        "name": name,
+                        "value": morsel.value,
+                        "domain": domain,
+                        "path": "/",
+                    }
+                )
+        return payload
+
+    def _blocker_summary(self, reason: str) -> str:
+        if reason == "risk_control":
+            return "检测到滑块/验证码/风控提示，停止自动重新上架"
+        if reason == "login_required":
+            return "检测到登录页或登录提示，需要人工重新登录"
+        if reason == "permission_required":
+            return "检测到重新发布页权限不足，需要人工确认账号权限"
+        return reason

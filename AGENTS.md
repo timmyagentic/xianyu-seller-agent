@@ -2,21 +2,22 @@
 
 ## 项目结构与模块组织
 
-本仓库当前是文档先行项目，根目录包含 `README.md`，设计文档在 `docs/superpowers/specs/`，参考实现映射在 `docs/reference-implementation-map.md`。后续代码应先迁入 `XianyuAutoAgent` 的根级 Python 结构：`main.py`、`XianyuApis.py`、`XianyuAgent.py`、`context_manager.py`、`xianyu_qr_login.py` 和 `prompts/`。新增能力放入 `services/messages/`、`services/delivery/`、`services/listing/`。运行时数据放 `data/`，重新上架任务配置放 `relist/`，这些本地数据默认不提交。
+本仓库是单进程 Python 项目，根级自动回复结构来自 `XianyuAutoAgent`：`main.py`、`XianyuApis.py`、`XianyuAgent.py`、`context_manager.py`、`xianyu_qr_login.py`、`utils/` 和 `prompts/`。新增能力放入 `services/messages/`、`services/delivery/`、`services/listing/`。设计文档在 `docs/superpowers/specs/`，实施计划在 `docs/superpowers/plans/`，参考实现映射在 `docs/reference-implementation-map.md`。运行时数据放 `data/`，重新上架任务配置放 `relist/`，这些本地数据默认不提交。
 
 ## 构建、测试与开发命令
 
-当前仓库尚无可运行代码。代码迁入后使用：
+本地开发使用：
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+python -m pytest -q
 python main.py --qr-login
 python main.py
 ```
 
-`python main.py --qr-login` 用于刷新 Cookie，`python main.py` 启动自动回复。后续 CLI 应兼容 `python main.py delivery add ...`、`python main.py listing relist --item-id 123` 和 `python main.py listing relist relist/item-001.json`。
+`python main.py --qr-login` 用于刷新 Cookie，`python main.py` 启动自动回复。CLI 兼容 `python main.py delivery add ...`、`python main.py delivery list ...`、`python main.py listing relist --item-id 123`、`python main.py listing relist relist/item-001.json` 和 `python main.py listing status`。无真实 Cookie 时只运行测试和帮助命令，不启动真实平台动作。
 
 ## 编码风格与命名
 
@@ -33,3 +34,9 @@ python main.py
 ## 安全与配置
 
 禁止提交 `.env`、Cookie、API Key、SQLite 运行库、买家信息和发货库存。自动发货、自动确认和自动重新上架默认关闭。遇到风控、滑块验证或 Cookie 失效时，记录原因并要求人工处理，不要实现绕过逻辑。
+
+## 账号与平台约束
+
+当前绑定的闲鱼账号已经开通鱼小铺。发布、重新发布和多库存相关能力必须同时考虑普通闲鱼发布页和 seller 工作台：无库存要求的重新发布可使用 `https://www.goofish.com/publish?itemId=...&editScene=rePutOn`；涉及平台侧库存、鱼小铺商品管理和多库存验证时，优先使用 `https://seller.goofish.com/?site=COMMONPRO#/seller-item/goods-manage` 或 `#/seller-item/publish`。
+
+目标库存存在时，Playwright 执行器必须真实找到并填写库存输入框，找不到库存输入框时返回结构化失败，不要继续点击发布或伪造平台侧库存修改成功。旧的 `#/seller-item` 路由不是当前可用的商品管理页；不要把它作为默认 seller 路由。

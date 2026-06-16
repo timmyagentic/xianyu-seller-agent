@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>闲鱼卖家自动化</title>
+    <link rel="stylesheet" href="/assets/app.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">闲</div>
+          <div>
+            <div class="brand-title">闲鱼卖家自动化</div>
+            <div class="brand-subtitle">Seller Agent</div>
+          </div>
+        </div>
+        <nav class="nav" aria-label="主导航">
+          <button class="nav-item is-active" data-view="overview">总览</button>
+          <button class="nav-item" data-view="delivery">自动发货</button>
+          <button class="nav-item" data-view="relist">自动上架</button>
+          <button class="nav-item" data-view="publish">发布商品</button>
+          <button class="nav-item" data-view="jobs">任务记录</button>
+        </nav>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <h1 id="pageTitle">总览</h1>
+            <p id="pageSubtitle">本地运行状态与关键开关</p>
+          </div>
+          <button id="refreshBtn" class="primary-btn" type="button">刷新</button>
+        </header>
+
+        <section id="notice" class="notice" hidden></section>
+
+        <section id="view-overview" class="view is-active">
+          <div class="metric-grid">
+            <div class="metric"><span>发货配置</span><strong id="metricDelivery">0</strong></div>
+            <div class="metric"><span>上架配置</span><strong id="metricRelist">0</strong></div>
+            <div class="metric"><span>商品快照</span><strong id="metricItems">0</strong></div>
+            <div class="metric"><span>上架任务</span><strong id="metricJobs">0</strong></div>
+          </div>
+          <div class="panel">
+            <div class="panel-heading">
+              <h2>运行开关</h2>
+            </div>
+            <div id="envList" class="switch-list"></div>
+          </div>
+        </section>
+
+        <section id="view-delivery" class="view">
+          <div class="split-layout">
+            <form id="deliveryForm" class="panel form-panel">
+              <h2>发货配置</h2>
+              <label>商品 ID<input name="item_id" required /></label>
+              <label>名称<input name="name" /></label>
+              <label>类型
+                <select name="delivery_type">
+                  <option value="text">统一文本</option>
+                  <option value="data">一次性库存</option>
+                  <option value="api">API 获取</option>
+                </select>
+              </label>
+              <label>发货内容<textarea name="content" rows="6"></textarea></label>
+              <label class="checkbox"><input name="enabled" type="checkbox" checked /> 启用</label>
+              <button class="primary-btn" type="submit">保存发货配置</button>
+            </form>
+            <div class="panel table-panel">
+              <div class="panel-heading"><h2>已有发货配置</h2></div>
+              <div class="table-wrap"><table id="deliveryTable"></table></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="view-relist" class="view">
+          <div class="split-layout">
+            <form id="relistConfigForm" class="panel form-panel">
+              <h2>自动上架配置</h2>
+              <label>商品 ID<input name="item_id" required /></label>
+              <label>期望标题<input name="expected_title" /></label>
+              <label>目标库存<input name="target_stock" type="number" min="1" value="7" required /></label>
+              <label class="checkbox"><input name="enabled" type="checkbox" checked /> 启用</label>
+              <label class="checkbox"><input name="allow_playwright" type="checkbox" checked /> 允许浏览器执行</label>
+              <button class="primary-btn" type="submit">保存上架配置</button>
+            </form>
+            <form id="relistRunForm" class="panel form-panel">
+              <h2>立即执行</h2>
+              <label>商品 ID<input name="item_id" required /></label>
+              <label>期望标题<input name="expected_title" /></label>
+              <label>目标库存<input name="target_stock" type="number" min="1" value="7" required /></label>
+              <label class="checkbox"><input name="allow_playwright" type="checkbox" checked /> 允许浏览器执行</label>
+              <label class="checkbox danger"><input name="confirm_real_relist" type="checkbox" /> 确认真实执行</label>
+              <button class="primary-btn" type="submit">执行重新上架</button>
+            </form>
+          </div>
+          <div class="panel table-panel">
+            <div class="panel-heading"><h2>自动上架配置</h2></div>
+            <div class="table-wrap"><table id="relistConfigTable"></table></div>
+          </div>
+        </section>
+
+        <section id="view-publish" class="view">
+          <form id="publishForm" class="panel form-panel wide-form">
+            <h2>发布新商品</h2>
+            <div class="form-grid">
+              <label>标题<input name="title" required /></label>
+              <label>价格<input name="price" required /></label>
+              <label>库存<input name="stock" type="number" min="1" value="7" required /></label>
+              <label>图片路径<input name="images" placeholder="/path/a.png, /path/b.png" required /></label>
+            </div>
+            <label>描述<textarea name="description" rows="8" required></textarea></label>
+            <label class="checkbox danger"><input name="confirm_real_publish" type="checkbox" /> 确认真实发布</label>
+            <button class="primary-btn" type="submit">发布新商品</button>
+          </form>
+        </section>
+
+        <section id="view-jobs" class="view">
+          <div class="panel table-panel">
+            <div class="panel-heading"><h2>最近任务</h2></div>
+            <div class="table-wrap"><table id="jobsTable"></table></div>
+          </div>
+          <div class="panel table-panel">
+            <div class="panel-heading"><h2>商品快照</h2></div>
+            <div class="table-wrap"><table id="itemsTable"></table></div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="/assets/app.js"></script>
+  </body>
+</html>

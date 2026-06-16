@@ -64,7 +64,9 @@ MVP 支持虚拟商品发货：
 
 ## 重新上架设计
 
-重新上架只针对“已经发布过的商品”。MVP 不从本地草稿创建全新商品，也不上传图片或重填完整发布表单。后续实现应优先寻找并封装闲鱼商品管理的重新上架 API；如果 API 不稳定，再用 Playwright 进入商品管理页，对指定 `item_id` 执行页面上的“重新上架”动作。
+当前绑定账号已经开通鱼小铺，重新上架和补库存设计必须区分两个执行面：普通重新发布页 `https://www.goofish.com/publish?itemId=...&editScene=rePutOn` 适合无库存要求的重新发布；鱼小铺 seller 工作台适合多库存和商品管理库存验证。真实验证到的可用商品管理路由是 `https://seller.goofish.com/?site=COMMONPRO#/seller-item/goods-manage`，旧的 `#/seller-item` 路由不可作为默认入口。
+
+重新上架只针对“已经发布过的商品”。MVP 不从本地草稿创建全新商品，也不上传图片或重填完整发布表单。后续实现应优先寻找并封装闲鱼重新发布 API；如果 API 不稳定，再用 Playwright 进入普通发布页的 `editScene=rePutOn` 路由，对指定 `item_id` 执行页面上的重新发布动作。
 
 输入为本地重新上架配置，最小形式是商品 ID：
 
@@ -85,9 +87,9 @@ MVP 支持虚拟商品发货：
 2. 同步或读取当前账号的商品列表，确认该商品属于当前账号且仍在商品管理中可见。
 3. 查询目标商品当前状态；如果已上架，记录为 `already_active`，只刷新发货绑定。
 4. 如果已下架或可重新上架，优先调用商品管理 mtop API 执行重新上架。
-5. 如果 API 不可用，启动 Playwright Chromium，向 `goofish.com`、`taobao.com`、`alipay.com` 和 `seller.goofish.com` 注入 Cookie。
-6. 打开商品管理页，定位目标 `item_id` 或标题，检查登录状态、滑块验证和操作按钮。
-7. 点击“重新上架”并等待结果；遇到风控、滑块、无法定位商品或按钮缺失时停止自动动作并记录原因。
+5. 如果 API 不可用，启动 Playwright Chromium，向 `goofish.com`、`taobao.com` 和 `alipay.com` 注入 Cookie。
+6. 打开普通发布页的重新发布路由或鱼小铺 seller 工作台目标页，定位目标 `item_id` 或标题，检查登录状态、滑块验证、发布按钮和库存输入框；请求包含目标库存时，必须真实找到并填写库存输入框，找不到时停止并记录 `stock_input_not_found`，不点击发布、不伪造平台库存修改成功。
+7. 点击“发布/立即发布”并等待结果；遇到风控、滑块、无法定位商品或按钮缺失时停止自动动作并记录原因。
 8. 重新同步商品状态，记录响应摘要、截图、商品 URL、最终状态和失败原因。
 9. 重新上架成功或商品已处于上架状态后，绑定或更新 `delivery_configs.item_id`。
 
