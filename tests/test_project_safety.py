@@ -6,7 +6,7 @@ import sys
 
 def test_gitignore_protects_runtime_and_secret_files():
     text = Path(".gitignore").read_text(encoding="utf-8")
-    for pattern in [".env", "data/", "relist/*.json", "*.db", "*.sqlite", "__pycache__/"]:
+    for pattern in [".env", "data/", "relist/*.json", "docs/listings/", "*.db", "*.sqlite", "__pycache__/"]:
         assert pattern in text
 
 

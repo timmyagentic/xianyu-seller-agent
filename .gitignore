@@ -16,6 +16,8 @@ screenlog.*
 relist/*.json
 relist/*.jsonl
 
+docs/listings/
+
 .pytest_cache/
 .coverage
 htmlcov/

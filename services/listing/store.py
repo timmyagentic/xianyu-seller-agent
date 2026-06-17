@@ -3,7 +3,7 @@ import os
 import sqlite3
 from datetime import datetime
 
-from .models import AutoRelistConfig, ItemSnapshot, ListingJob, RelistRequest
+from .models import AutoRelistConfig, ItemSnapshot, ListingContentVersion, ListingJob, RelistRequest
 
 
 def initialize_listing_schema(db_path: str) -> None:
@@ -64,6 +64,28 @@ def initialize_listing_schema(db_path: str) -> None:
             """
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_auto_relist_configs_item_id ON auto_relist_configs (item_id)")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS listing_content_versions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_id TEXT NOT NULL,
+                version_label TEXT NOT NULL DEFAULT '',
+                title TEXT NOT NULL DEFAULT '',
+                description TEXT NOT NULL DEFAULT '',
+                price TEXT NOT NULL DEFAULT '',
+                stock INTEGER,
+                notes TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_listing_content_versions_item_id
+            ON listing_content_versions (item_id)
+            """
+        )
 
 
 def _ensure_column(conn: sqlite3.Connection, table_name: str, column_name: str, column_type: str) -> None:
@@ -160,6 +182,60 @@ class ListingStore:
             if snapshot:
                 snapshots.append(snapshot)
         return snapshots
+
+    def record_content_version(
+        self,
+        *,
+        item_id: str,
+        title: str = "",
+        description: str = "",
+        price: str = "",
+        stock: int | None = None,
+        version_label: str = "",
+        notes: str = "",
+        source: str = "",
+    ) -> int:
+        item_id = str(item_id or "").strip()
+        if not item_id:
+            raise ValueError("item_id is required")
+
+        now = datetime.now().isoformat()
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO listing_content_versions
+                (item_id, version_label, title, description, price, stock, notes, source, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    item_id,
+                    str(version_label or "").strip(),
+                    str(title or ""),
+                    str(description or ""),
+                    str(price or ""),
+                    stock,
+                    str(notes or ""),
+                    str(source or ""),
+                    now,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def list_content_versions(self, item_id: str | None = None, limit: int = 50) -> list[ListingContentVersion]:
+        query = """
+            SELECT id, item_id, version_label, title, description, price, stock, notes, source, created_at
+            FROM listing_content_versions
+        """
+        params: tuple[object, ...]
+        if item_id:
+            query += " WHERE item_id = ?"
+            params = (str(item_id).strip(), int(limit))
+        else:
+            params = (int(limit),)
+        query += " ORDER BY id DESC LIMIT ?"
+        with sqlite3.connect(self.db_path) as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [self._content_version_from_row(row) for row in rows]
 
     def record_job(
         self,
@@ -324,6 +400,20 @@ class ListingStore:
             allow_playwright=bool(row[5]),
             created_at=row[6],
             updated_at=row[7],
+        )
+
+    def _content_version_from_row(self, row) -> ListingContentVersion:
+        return ListingContentVersion(
+            id=int(row[0]),
+            item_id=row[1],
+            version_label=row[2] or "",
+            title=row[3] or "",
+            description=row[4] or "",
+            price=row[5] or "",
+            stock=row[6],
+            notes=row[7] or "",
+            source=row[8] or "",
+            created_at=row[9],
         )
 
     def _item_id_from_data(self, item: dict) -> str:

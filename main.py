@@ -1222,6 +1222,24 @@ def build_cli_parser():
     publish_parser.add_argument("--image", action="append", default=[])
     publish_parser.add_argument("--confirm-real-publish", action="store_true")
 
+    content_version_parser = listing_subparsers.add_parser("content-version", help="管理本地商品信息版本")
+    content_version_subparsers = content_version_parser.add_subparsers(dest="content_version_command", required=True)
+
+    content_version_add_parser = content_version_subparsers.add_parser("add", help="保存商品信息版本到本地 SQLite")
+    content_version_add_parser.add_argument("--item-id", required=True)
+    content_version_add_parser.add_argument("--label", default="", dest="version_label")
+    content_version_add_parser.add_argument("--title", default="")
+    content_version_add_parser.add_argument("--description", default="")
+    content_version_add_parser.add_argument("--description-file")
+    content_version_add_parser.add_argument("--price", default="")
+    content_version_add_parser.add_argument("--stock", type=int)
+    content_version_add_parser.add_argument("--notes", default="")
+    content_version_add_parser.add_argument("--source", default="manual")
+
+    content_version_list_parser = content_version_subparsers.add_parser("list", help="列出本地商品信息版本")
+    content_version_list_parser.add_argument("--item-id")
+    content_version_list_parser.add_argument("--limit", type=int, default=20)
+
     preflight_parser = listing_subparsers.add_parser("relist-preflight", help="只读预检授权浏览器是否能定位重新上架入口")
     preflight_parser.add_argument("--item-id", required=True)
     preflight_parser.add_argument("--expected-title", default="")
@@ -1433,6 +1451,37 @@ def run_cli(argv=None):
                 )
             print(json.dumps(result.__dict__, ensure_ascii=False, indent=2))
             return 0 if result.success else 1
+
+        if args.listing_command == "content-version":
+            if args.content_version_command == "add":
+                if args.stock is not None and args.stock < 1:
+                    parser.error("listing content-version add --stock must be greater than 0")
+                description = args.description
+                if args.description_file:
+                    description = Path(args.description_file).read_text(encoding="utf-8")
+                try:
+                    version_id = listing_store.record_content_version(
+                        item_id=args.item_id,
+                        title=args.title,
+                        description=description,
+                        price=args.price,
+                        stock=args.stock,
+                        version_label=args.version_label,
+                        notes=args.notes,
+                        source=args.source,
+                    )
+                except ValueError as exc:
+                    parser.error(str(exc))
+                print(json.dumps({"version_id": version_id, "item_id": args.item_id}, ensure_ascii=False, indent=2))
+                return 0
+
+            if args.content_version_command == "list":
+                if args.limit < 1:
+                    parser.error("listing content-version list --limit must be greater than 0")
+                versions = listing_store.list_content_versions(item_id=args.item_id, limit=args.limit)
+                payload = [version.__dict__ for version in versions]
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+                return 0
 
         if args.listing_command == "auto-relist":
             if args.auto_relist_command == "set":

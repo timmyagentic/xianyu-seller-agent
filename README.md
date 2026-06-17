@@ -158,6 +158,8 @@ python main.py listing relist --item-id 123
 python main.py listing relist --item-id 123 --stock 7
 python main.py listing relist --item-id 123 --stock 7 --allow-playwright --confirm-real-relist
 python main.py listing publish --title "商品标题" --description "商品描述" --price 9.90 --stock 7 --image /path/to/image.png --confirm-real-publish
+python main.py listing content-version add --item-id 123 --label v1 --title "商品标题" --description-file data/listing-drafts/item-123-description.txt --price 9.90 --stock 7
+python main.py listing content-version list --item-id 123
 python main.py listing auto-relist set --item-id 123 --stock 7
 python main.py listing auto-relist list --item-id 123
 python main.py listing relist relist/item-001.json
@@ -167,6 +169,8 @@ python main.py listing status
 `listing fetch-items` 会参考 `xianyu-auto-reply` 的商品同步策略，调用闲鱼 `mtop.idle.web.xyh.item.list` 在售分组接口，分页获取当前账号所有已发布商品并写入本地 `items` 快照表。
 
 `listing item-status` 会只读刷新单个商品的真实平台状态，并把脱敏后的状态摘要输出到终端，同时更新本地 `items` 快照。它会区分 `active`、`inactive`、`sold`、`relistable` 等状态，并保留平台原始状态码、状态文案、状态来源和 `can_relist` 判断，便于在执行重新上架前确认当前商品是不是旧快照误判。
+
+`listing content-version add/list` 用于记录商品标题、描述、价格和库存的本地版本历史，写入 `DB_PATH` 指向的 SQLite `listing_content_versions` 表，默认是 `data/chat_history.db`。这类真实商品信息不提交到 Git；`docs/listings/` 已加入忽略规则，临时文案草稿应放本地或通过 CLI 写入数据库。
 
 `listing relist-preflight` 会在不点击、不填库存、不写 `listing_jobs` 的前提下打开授权浏览器做页面预检：先刷新单商品真实状态，再进入普通发布页的重新发布路由 `https://www.goofish.com/publish?itemId=...&editScene=rePutOn`，检查页面是否能看到目标商品和发布入口。它用于真实执行前收集页面证据；遇到登录、滑块、验证码、风控、找不到商品或找不到按钮时只返回结构化失败。为便于排查页面不可执行原因，preflight 会输出安全的 `page_evidence`，包括当前 URL、页面标题、正文长度、命中的状态标记和 input/button 数量，但不会输出完整页面正文。
 
