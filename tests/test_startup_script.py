@@ -240,3 +240,93 @@ def test_startup_script_setup_installs_requirements_for_existing_venv(tmp_path):
 
     assert result.returncode == 0
     assert f"-m pip install -r {root / 'requirements.txt'}" in log_path.read_text(encoding="utf-8")
+
+
+def test_stop_live_cleans_orphaned_project_live_processes(tmp_path):
+    root = tmp_path / "repo"
+    fake_bin = tmp_path / "bin"
+    root.mkdir()
+    fake_bin.mkdir()
+    (root / "main.py").write_text("print('placeholder')\n", encoding="utf-8")
+    (fake_bin / "screen").write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ \"$1\" == \"-ls\" ]]; then\n"
+        "  printf 'There is a screen on:\\n\\t123.xianyu-seller-agent-live\\t(Detached)\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "ps").write_text(
+        "#!/usr/bin/env bash\n"
+        "printf ' 111 login -pflq timmy /bin/bash -lc cd %s && exec %s/.venv/bin/python main.py >> %s/logs/live.log 2>&1\\n' \"$XIANYU_AGENT_ROOT\" \"$XIANYU_AGENT_ROOT\" \"$XIANYU_AGENT_ROOT\"\n"
+        "printf ' 222 /Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python main.py\\n'\n"
+        "printf ' 333 /Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python main.py web\\n'\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "lsof").write_text(
+        "#!/usr/bin/env bash\n"
+        "case \"$*\" in\n"
+        "  *'-p 222'*'-d cwd'*) printf 'p222\\nn%s\\n' \"$XIANYU_AGENT_ROOT\" ;;\n"
+        "  *'-p 333'*'-d cwd'*) printf 'p333\\nn%s\\n' \"$XIANYU_AGENT_ROOT\" ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    for fake in fake_bin.iterdir():
+        fake.chmod(0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+    env["XIANYU_AGENT_ROOT"] = str(root)
+    result = subprocess.run([str(SCRIPT), "stop-live"], cwd=ROOT, env=env, capture_output=True, text=True)
+
+    assert result.returncode == 0
+    assert "stopped xianyu-seller-agent-live" in result.stdout
+    assert "terminated stale live process pid 111" in result.stdout
+    assert "terminated stale live process pid 222" in result.stdout
+    assert "pid 333" not in result.stdout
+
+
+def test_stop_web_cleans_orphaned_project_web_processes(tmp_path):
+    root = tmp_path / "repo"
+    fake_bin = tmp_path / "bin"
+    root.mkdir()
+    fake_bin.mkdir()
+    (root / "main.py").write_text("print('placeholder')\n", encoding="utf-8")
+    (fake_bin / "screen").write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ \"$1\" == \"-ls\" ]]; then\n"
+        "  printf 'There is a screen on:\\n\\t456.xianyu-seller-agent-web\\t(Detached)\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "ps").write_text(
+        "#!/usr/bin/env bash\n"
+        "printf ' 111 /Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python main.py\\n'\n"
+        "printf ' 222 login -pflq timmy /bin/bash -lc cd %s && LOG_LEVEL=INFO exec %s/.venv/bin/python main.py web >> %s/logs/web.log 2>&1\\n' \"$XIANYU_AGENT_ROOT\" \"$XIANYU_AGENT_ROOT\" \"$XIANYU_AGENT_ROOT\"\n"
+        "printf ' 333 /Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python main.py web\\n'\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "lsof").write_text(
+        "#!/usr/bin/env bash\n"
+        "case \"$*\" in\n"
+        "  *'-p 111'*'-d cwd'*) printf 'p111\\nn%s\\n' \"$XIANYU_AGENT_ROOT\" ;;\n"
+        "  *'-p 333'*'-d cwd'*) printf 'p333\\nn%s\\n' \"$XIANYU_AGENT_ROOT\" ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    for fake in fake_bin.iterdir():
+        fake.chmod(0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+    env["XIANYU_AGENT_ROOT"] = str(root)
+    result = subprocess.run([str(SCRIPT), "stop-web"], cwd=ROOT, env=env, capture_output=True, text=True)
+
+    assert result.returncode == 0
+    assert "stopped xianyu-seller-agent-web" in result.stdout
+    assert "terminated stale web process pid 222" in result.stdout
+    assert "terminated stale web process pid 333" in result.stdout
+    assert "pid 111" not in result.stdout
