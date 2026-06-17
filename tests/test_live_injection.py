@@ -221,6 +221,101 @@ def test_xianyu_live_allows_chat_reply_for_configured_item(tmp_path):
     assert any(payload["lwp"] == "/r/MessageStatus/read" for payload in websocket.sent)
 
 
+def test_xianyu_live_keeps_missing_stock_unknown_in_item_description():
+    live = XianyuLive.__new__(XianyuLive)
+
+    description = json.loads(
+        live.build_item_description(
+            {
+                "title": "资料包",
+                "price_text": "¥5",
+                "status": "active",
+                "platform_status_text": "在售",
+                "skuList": [],
+            }
+        )
+    )
+
+    assert description["total_stock"] is None
+    assert description["stock_state"] == "unknown"
+    assert description["price_range"] == "¥5"
+    assert description["status"] == "active"
+    assert description["platform_status_text"] == "在售"
+
+
+def test_xianyu_live_answers_availability_from_active_item_without_llm(tmp_path):
+    live = XianyuLive.__new__(XianyuLive)
+    live.delivery_store = DeliveryStore(db_path=str(tmp_path / "app.db"))
+    live.delivery_store.add_config(item_id="item-1", name="文本", delivery_type="text", content="发货内容")
+    live.delivery_service = type("FakeDeliveryService", (), {"enabled": True})()
+
+    reply = live.build_fact_reply(
+        "还有不",
+        {
+            "title": "资料包",
+            "status": "active",
+            "platform_status_text": "在售",
+            "skuList": [],
+        },
+        "item-1",
+    )
+
+    assert reply == "有的，拍下后自动发货"
+
+
+def test_xianyu_live_does_not_invent_new_account_discount_without_fact(tmp_path):
+    live = XianyuLive.__new__(XianyuLive)
+    live.delivery_store = DeliveryStore(db_path=str(tmp_path / "app.db"))
+    live.delivery_service = type("FakeDeliveryService", (), {"enabled": True})()
+
+    assert live.build_fact_reply("刚刚注册新号", {"title": "资料包", "skuList": []}, "item-1") == "这个我确认一下，稍后回复你"
+
+
+def test_xianyu_live_answers_new_account_when_item_fact_mentions_new_user(tmp_path):
+    live = XianyuLive.__new__(XianyuLive)
+    live.delivery_store = DeliveryStore(db_path=str(tmp_path / "app.db"))
+    live.delivery_store.add_config(item_id="item-1", name="文本", delivery_type="text", content="发货内容")
+    live.delivery_service = type("FakeDeliveryService", (), {"enabled": True})()
+
+    reply = live.build_fact_reply(
+        "刚刚注册新号",
+        {"title": "新用户 7 天体验卡", "skuList": []},
+        "item-1",
+    )
+
+    assert reply == "新号可以用，拍下后自动发货"
+
+
+def test_xianyu_live_replaces_unsupported_out_of_stock_reply(tmp_path):
+    live = XianyuLive.__new__(XianyuLive)
+    live.delivery_store = DeliveryStore(db_path=str(tmp_path / "app.db"))
+    live.delivery_store.add_config(item_id="item-1", name="文本", delivery_type="text", content="发货内容")
+    live.delivery_service = type("FakeDeliveryService", (), {"enabled": True})()
+
+    reply = live.guard_fact_reply(
+        "亲，暂时没货呢\n后续关注下补货哈",
+        {"title": "资料包", "status": "active", "platform_status_text": "在售", "skuList": []},
+        "item-1",
+        intent="default",
+    )
+
+    assert reply == "有的，拍下后自动发货"
+
+
+def test_xianyu_live_replaces_unsupported_discount_reply_outside_price_intent(tmp_path):
+    live = XianyuLive.__new__(XianyuLive)
+    live.delivery_store = DeliveryStore(db_path=str(tmp_path / "app.db"))
+
+    reply = live.guard_fact_reply(
+        "亲，新号有优惠哦\n关注店铺不迷路",
+        {"title": "资料包", "status": "active", "platform_status_text": "在售", "skuList": []},
+        "item-1",
+        intent="default",
+    )
+
+    assert reply == "这个我确认一下，稍后回复你"
+
+
 def _paid_order_message():
     return IncomingMessage(
         chat_id="chat-1",
