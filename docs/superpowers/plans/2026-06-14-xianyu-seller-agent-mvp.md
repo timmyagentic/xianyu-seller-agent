@@ -1,5 +1,7 @@
 # Xianyu Seller Agent MVP Implementation Plan
 
+> 过期说明（2026-06-17）：本文是早期 MVP 实施计划，记录了 `codex/xianyu-seller-agent-mvp` 分支上的分阶段实现过程。该分支对应工作已经合并到 `main`，本文中的固定 worktree、PR 和待办步骤不再作为当前执行指令；保留它仅用于追溯历史实现路径。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a local, single-process Python MVP that migrates XianyuAutoAgent auto-reply behavior first, then adds shared message parsing, SQLite-backed virtual delivery, and relisting for existing published items.

@@ -161,6 +161,10 @@ Playwright 路径会参考 `xianyu-auto-reply` 的页面初始化策略：先访
 
 普通聊天自动回复只对已配置商品生效：商品必须存在启用的发货配置，或存在启用的自动重新上架配置；未配置商品不会获取商品详情、不会进入 LLM，也不会发送自动回复。
 
+商品知识库使用本地 Markdown 文件维护，默认路径是 `data/item_knowledge/<item_id>.md`，例如 `data/item_knowledge/1030573156061.md`。自动回复生成前会把当前商品的 Markdown 知识库附加到商品信息后面，要求模型优先依据商品信息和知识库回答；如果商品信息和知识库都没有明确答案，应回复“这个我确认一下，稍后回复你”，不要编造。`ITEM_KNOWLEDGE_DIR` 可覆盖知识库目录，`ITEM_KNOWLEDGE_MAX_CHARS` 控制单个商品注入 prompt 的最大字符数。
+
+遇到兜底回复或明显不确定回复时，程序会把问题追加到 `UNKNOWN_QUESTIONS_PATH`，默认是 `data/unknown_questions.jsonl`。每行包含时间、商品 ID、会话 ID、用户问题、触发原因、机器人回复和意图，便于后续人工 review 后补进对应商品的 Markdown 知识库。该文件属于本地运行数据，不应提交。
+
 启用自动发货后，程序会监听“我已付款，等待你发货”“等待卖家发货”等付款完成消息，解析订单号、商品 ID、买家和会话，再按商品配置发货。未配置启用发货内容的商品会直接跳过，不会拉取订单详情或发送任何内容。同一订单已经写入 `sent` 日志后会跳过重复发送；如果 `AUTO_CONFIRM_DELIVERY_ENABLED=true` 且该订单尚无 `platform_confirmed` 或 `platform_already_delivered` 日志，程序会继续尝试在闲鱼订单侧确认无物流发货。`data` 库存会按订单购买数量先预占，发送成功后标记 `sent`，发送失败时保留为 `failed_retryable` 以便同一订单重试继续使用原 key。发货内容发送成功但平台确认发货失败时，结果会记录为 `sent_confirm_failed` 和 `platform_confirm_failed`，不会重复发送内容，也不会触发发货后自动重新上架；下次遇到同一订单付款消息时会只重试平台确认。发货成功后，如果同时开启 `AUTO_RELIST_ENABLED=true` 且该商品存在启用的 `auto-relist` 配置，程序会创建重新上架任务并记录目标库存；带目标库存的重新上架请求即使商品状态显示为 `active`，也会继续执行补库存/重新上架动作，不会用 `already_active` 早退。当 `AUTO_CONFIRM_DELIVERY_ENABLED=true` 时，平台确认失败会阻止这一步。如果允许 Playwright 但没有设置 `AUTO_RELIST_CONFIRM_PLAYWRIGHT=true`，任务会停在需要授权浏览器执行的结构化结果，不会点击页面；失败只影响重新上架任务日志，不回滚已发货结果。
 
 遇到 Cookie 失效、滑块、风控、账号归属不清或真实交易风险时，程序应记录原因并交给人工处理，不实现绕过逻辑。
