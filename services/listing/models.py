@@ -60,6 +60,20 @@ class ItemSnapshot:
 
 
 @dataclass(frozen=True)
+class ListingContentVersion:
+    id: int
+    item_id: str
+    version_label: str
+    title: str
+    description: str
+    price: str
+    stock: int | None
+    notes: str
+    source: str
+    created_at: str
+
+
+@dataclass(frozen=True)
 class RelistApiResult:
     success: bool
     final_status: str = ""
