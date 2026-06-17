@@ -190,6 +190,7 @@ Playwright 路径会参考 `xianyu-auto-reply` 的页面初始化策略：先访
 - `LLM_ENABLE_SEARCH=false`：默认不发送供应商特定的联网搜索扩展参数。
 - `COOKIE_REFRESH_ENABLED=true`：默认每 10 分钟调用登录态续期接口合并 Set-Cookie，减少 `_m_h5_tk` 令牌过期导致的掉线；Session 过期、滑块或风控仍需人工重新登录。
 - `AUTO_REPLY_ENABLED=true`：控制普通买家聊天是否进入 LLM 自动回复；这是全局总闸，实际只会回复本地已配置自动化的商品。付款完成消息仍由 `AUTO_DELIVERY_ENABLED` 单独控制。
+- `NO_BARGAIN_MODE=true`：价格意图默认不砍价。买家询问优惠、折扣、预算、砍价、包邮或其他降价诉求时，程序直接回复固定拒绝降价话术，不调用价格 LLM Agent；只有显式设为 `false` / `0` / `no` / `off` 时，才恢复旧的 `PriceAgent` 议价策略。
 - `AUTO_DELIVERY_ENABLED=false`：自动发货默认关闭。确认商品发货配置、库存和测试订单后，才在本地 `.env` 改成 `true`；即使总闸开启，没有启用发货配置的商品也不会自动发货。
 - `AUTO_CONFIRM_DELIVERY_ENABLED=false`：闲鱼订单侧自动确认发货默认关闭。开启后，程序会在预设发货内容发送成功后调用闲鱼无物流确认发货接口；如果平台返回已发货，也按成功处理。
 - `AUTO_RELIST_ENABLED=false`：发货后自动重新上架默认关闭；即使商品已配置 `listing auto-relist set`，未打开该开关也不会触发。
