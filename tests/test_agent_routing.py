@@ -103,6 +103,18 @@ def test_base_agent_uses_modelscope_default_model(monkeypatch):
     assert client.completions.calls[0]["model"] == "deepseek-ai/DeepSeek-V4-Pro"
 
 
+def test_base_agent_adds_fact_constraints_to_prompt():
+    client = FakeClient()
+    agent = BaseAgent(client, "系统提示", lambda text: text)
+
+    agent.generate("还有不", '{"total_stock": null}', "")
+
+    system_prompt = client.completions.calls[0]["messages"][0]["content"]
+    assert "事实约束" in system_prompt
+    assert "库存为 null、unknown 或缺失时，只表示未知" in system_prompt
+    assert "绝不能回复有优惠、折扣或赠品" in system_prompt
+
+
 def test_base_agent_allows_model_name_override(monkeypatch):
     monkeypatch.setenv("MODEL_NAME", "custom/model")
     client = FakeClient()

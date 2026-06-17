@@ -25,6 +25,12 @@ NO_BARGAIN_REQUEST_KEYWORDS = (
     "低点",
     "让一点",
 )
+FACT_CONSTRAINT_PROMPT = """【事实约束】
+1. 只能依据【商品信息】和【你与客户对话历史】回答库存、优惠、折扣、赠品、自动发货、售后承诺。
+2. 商品信息里的库存为 null、unknown 或缺失时，只表示未知，绝不能据此回复没货、缺货、补货。
+3. 商品信息没有明确写优惠、折扣或赠品时，绝不能回复有优惠、折扣或赠品。
+4. 遇到不确定的商品事实，固定回复“这个我确认一下，稍后回复你”。
+"""
 
 
 class LLMResponseError(RuntimeError):
@@ -263,7 +269,15 @@ class BaseAgent:
     def _build_messages(self, user_msg: str, item_desc: str, context: str) -> List[Dict]:
         """构建消息链"""
         return [
-            {"role": "system", "content": f"【商品信息】{item_desc}\n【你与客户对话历史】{context}\n{self.system_prompt}"},
+            {
+                "role": "system",
+                "content": (
+                    f"【商品信息】{item_desc}\n"
+                    f"【你与客户对话历史】{context}\n"
+                    f"{FACT_CONSTRAINT_PROMPT}\n"
+                    f"{self.system_prompt}"
+                ),
+            },
             {"role": "user", "content": user_msg}
         ]
 
