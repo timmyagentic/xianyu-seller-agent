@@ -52,3 +52,30 @@ def test_startup_script_status_is_secret_safe_with_overridden_root(tmp_path):
     assert result.returncode == 0
     assert "secret-cookie-value" not in result.stdout
     assert ".env: present" in result.stdout
+
+
+def test_startup_script_setup_installs_requirements_for_existing_venv(tmp_path):
+    root = tmp_path / "repo"
+    venv = root / ".venv"
+    bin_dir = venv / "bin"
+    log_path = tmp_path / "python-calls.log"
+    root.mkdir()
+    bin_dir.mkdir(parents=True)
+    (root / "main.py").write_text("print('placeholder')\n", encoding="utf-8")
+    (root / "requirements.txt").write_text("pytest>=8\n", encoding="utf-8")
+    python_bin = bin_dir / "python"
+    python_bin.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$*\" >> \"$PYTHON_CALL_LOG\"\n",
+        encoding="utf-8",
+    )
+    python_bin.chmod(0o755)
+
+    env = os.environ.copy()
+    env["PYTHON_CALL_LOG"] = str(log_path)
+    env["XIANYU_AGENT_ROOT"] = str(root)
+    env["XIANYU_AGENT_VENV"] = str(venv)
+    result = subprocess.run([str(SCRIPT), "setup"], cwd=ROOT, env=env, capture_output=True, text=True)
+
+    assert result.returncode == 0
+    assert f"-m pip install -r {root / 'requirements.txt'}" in log_path.read_text(encoding="utf-8")

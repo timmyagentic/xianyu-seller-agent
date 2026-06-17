@@ -61,6 +61,7 @@ ensure_screen() {
 ensure_venv() {
   require_project_root
   if [[ -x "$PYTHON_BIN" ]]; then
+    "$PYTHON_BIN" -m pip install -r "$PROJECT_ROOT/requirements.txt"
     return
   fi
 
