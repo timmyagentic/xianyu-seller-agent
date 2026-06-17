@@ -15,7 +15,7 @@ import random
 
 
 from utils.xianyu_utils import generate_mid, generate_uuid, trans_cookies, generate_device_id, decrypt
-from XianyuAgent import XianyuReplyBot
+from XianyuAgent import FALLBACK_REPLY, XianyuReplyBot
 from context_manager import ChatContextManager
 from services.delivery.orders import OrderDetail, OrderInfo
 from services.delivery.service import DeliveryService
@@ -27,6 +27,18 @@ from services.listing.playwright_relist import PlaywrightRelistExecutor
 from services.listing.relist import RelistService, load_relist_request
 from services.listing.store import ListingStore
 from services.messages import MessageDeduplicator, MessageParser
+from services.messages.facts import (
+    asks_availability,
+    asks_new_account,
+    item_is_available_for_reply,
+    item_mentions_discount,
+    item_mentions_new_user,
+    item_price_display,
+    normalize_stock_quantity,
+    reply_claims_discount,
+    reply_claims_unavailable,
+    stock_state,
+)
 from services.web_app import run_web_server
 from xianyu_qr_login import QRLoginError, run_qr_login_cli
 
@@ -468,6 +480,43 @@ class XianyuLive:
         except (ValueError, TypeError):
             # 遇到 None 或脏数据，默认返回 0
             return 0.0
+
+    def availability_reply(self, item_id):
+        delivery_enabled = self.has_enabled_delivery_config(item_id)
+        delivery_service = getattr(self, "delivery_service", None)
+        if delivery_enabled and getattr(delivery_service, "enabled", False):
+            return "有的，拍下后自动发货"
+        if delivery_enabled:
+            return "有的，拍下后会发货"
+        return "有的，直接拍就行"
+
+    def build_fact_reply(self, user_msg, item_info, item_id):
+        """Return deterministic replies for facts where LLM hallucination is high risk."""
+        if asks_availability(user_msg):
+            if item_is_available_for_reply(item_info):
+                return self.availability_reply(item_id)
+            return FALLBACK_REPLY
+
+        if asks_new_account(user_msg):
+            if item_mentions_new_user(item_info):
+                if self.has_enabled_delivery_config(item_id):
+                    delivery_text = self.availability_reply(item_id).replace("有的，", "")
+                    return f"新号可以用，{delivery_text}"
+                return "新号可以用，按页面提示领取"
+            return FALLBACK_REPLY
+
+        return None
+
+    def guard_fact_reply(self, reply, item_info, item_id, intent=None):
+        if reply_claims_unavailable(reply) and item_is_available_for_reply(item_info):
+            logger.warning("拦截未被商品事实支持的缺货回复: item_id={}, reply={}", item_id, reply)
+            return self.availability_reply(item_id)
+
+        if intent != "price" and reply_claims_discount(reply) and not item_mentions_discount(item_info):
+            logger.warning("拦截未被商品事实支持的优惠回复: item_id={}, reply={}", item_id, reply)
+            return FALLBACK_REPLY
+
+        return reply
     
     def build_item_description(self, item_info):
         """构建商品描述"""
@@ -484,7 +533,7 @@ class XianyuLive:
             clean_skus.append({
                 "spec": spec_text,
                 "price": self.format_price(sku.get('price', 0)),
-                "stock": sku.get('quantity', 0)
+                "stock": normalize_stock_quantity(sku.get('quantity')) if 'quantity' in sku else None
             })
 
         # 获取价格
@@ -499,14 +548,16 @@ class XianyuLive:
                 price_display = f"¥{min_price} - ¥{max_price}" # 价格区间
         else:
             # 如果没有SKU价格，回退使用商品主价格
-            main_price = round(float(item_info.get('soldPrice', 0)), 2)
-            price_display = f"¥{main_price}"
+            price_display = item_price_display(item_info)
 
         summary = {
             "title": item_info.get('title', ''),
             "desc": item_info.get('desc', ''),
             "price_range": price_display,
-            "total_stock": item_info.get('quantity', 0),
+            "total_stock": normalize_stock_quantity(item_info.get('quantity')) if 'quantity' in item_info else None,
+            "stock_state": stock_state(item_info),
+            "status": item_info.get('status', ''),
+            "platform_status_text": item_info.get('platform_status_text', ''),
             "sku_details": clean_skus
         }
 
@@ -628,12 +679,25 @@ class XianyuLive:
 
         # 获取完整的对话上下文
         context = self.context_manager.get_context_by_chat(chat_id)
-        # 生成回复
-        bot_reply = self.reply_bot.generate_reply(
-            send_message,
-            item_description,
-            context=context
-        )
+        bot_reply = self.build_fact_reply(send_message, item_info, item_id)
+        if bot_reply is not None:
+            self.reply_bot.last_intent = "fact"
+            logger.info(f"使用商品事实保护回复: {bot_reply}")
+        else:
+            # 生成回复
+            bot_reply = self.reply_bot.generate_reply(
+                send_message,
+                item_description,
+                context=context,
+                item_id=item_id,
+                chat_id=chat_id,
+            )
+            bot_reply = self.guard_fact_reply(
+                bot_reply,
+                item_info,
+                item_id,
+                intent=self.reply_bot.last_intent,
+            )
 
         # 检查是否需要回复
         if bot_reply == "-":

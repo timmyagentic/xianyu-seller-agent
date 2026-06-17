@@ -83,6 +83,50 @@ python main.py
 
 在尚未创建虚拟环境时，也可以用 `uv run --with pytest python -m pytest -q` 临时运行测试；真实运行仍应使用 `.venv` 和 `requirements.txt`。
 
+## 稳定服务启动
+
+本项目有两个常驻服务面：
+
+- `live`：`python main.py`，负责闲鱼 WebSocket、自动回复、付款消息自动发货、确认发货和发货后重新上架 hook。
+- `web`：`python main.py web`，负责本地管理页面和本地 API。
+
+不要再手动进入某个临时 worktree 后用 `screen` 拼命令启动。仓库提供统一脚本，脚本会从自身位置解析稳定项目根目录，自动使用该根目录下的 `.venv`、`.env`、`data/` 和 `logs/`：
+
+```bash
+./scripts/xianyu-service.sh setup
+./scripts/xianyu-service.sh qr-login
+./scripts/xianyu-service.sh start
+./scripts/xianyu-service.sh status
+./scripts/xianyu-service.sh logs
+./scripts/xianyu-service.sh restart
+./scripts/xianyu-service.sh stop
+```
+
+常用流程：
+
+1. 在主仓库 `/Volumes/SamsungDisk/Code/xianyu-seller-agent` 执行 `./scripts/xianyu-service.sh setup` 创建或修复 `.venv`。
+2. 如果 `.env` 里没有有效 `COOKIES_STR`，执行 `./scripts/xianyu-service.sh qr-login` 扫码登录。
+3. 执行 `./scripts/xianyu-service.sh start` 同时启动 live 和 web。
+4. 执行 `./scripts/xianyu-service.sh status` 查看两个 `screen` 会话是否在跑。
+5. 执行 `./scripts/xianyu-service.sh logs` 查看 `logs/live.log` 和 `logs/web.log`。
+
+如果之前已经从 worktree 手动启动过 `xianyu-seller-agent-live` 或 `xianyu-seller-agent-web`，先在主仓库执行：
+
+```bash
+./scripts/xianyu-service.sh restart
+```
+
+`restart` 会停止同名旧 `screen` 会话，再从当前脚本所在的稳定项目根目录重新启动，避免运行目录继续依赖 `/Volumes/SamsungDisk/Code/.worktrees/...`。
+
+可选覆盖项：
+
+```bash
+XIANYU_AGENT_ROOT=/Volumes/SamsungDisk/Code/xianyu-seller-agent ./scripts/xianyu-service.sh start
+XIANYU_AGENT_LOG_DIR=/tmp/xianyu-logs ./scripts/xianyu-service.sh logs
+XIANYU_WEB_LOG_LEVEL=DEBUG ./scripts/xianyu-service.sh restart
+LINES=200 ./scripts/xianyu-service.sh logs
+```
+
 `python main.py` 等价于启动自动回复；帮助和本地配置命令不会要求 Cookie：
 
 ```bash
@@ -146,6 +190,7 @@ Playwright 路径会参考 `xianyu-auto-reply` 的页面初始化策略：先访
 - `LLM_ENABLE_SEARCH=false`：默认不发送供应商特定的联网搜索扩展参数。
 - `COOKIE_REFRESH_ENABLED=true`：默认每 10 分钟调用登录态续期接口合并 Set-Cookie，减少 `_m_h5_tk` 令牌过期导致的掉线；Session 过期、滑块或风控仍需人工重新登录。
 - `AUTO_REPLY_ENABLED=true`：控制普通买家聊天是否进入 LLM 自动回复；这是全局总闸，实际只会回复本地已配置自动化的商品。付款完成消息仍由 `AUTO_DELIVERY_ENABLED` 单独控制。
+- `NO_BARGAIN_MODE=true`：价格意图默认不砍价。买家询问优惠、折扣、预算、砍价、包邮或其他降价诉求时，程序直接回复固定拒绝降价话术，不调用价格 LLM Agent；只有显式设为 `false` / `0` / `no` / `off` 时，才恢复旧的 `PriceAgent` 议价策略。
 - `AUTO_DELIVERY_ENABLED=false`：自动发货默认关闭。确认商品发货配置、库存和测试订单后，才在本地 `.env` 改成 `true`；即使总闸开启，没有启用发货配置的商品也不会自动发货。
 - `AUTO_CONFIRM_DELIVERY_ENABLED=false`：闲鱼订单侧自动确认发货默认关闭。开启后，程序会在预设发货内容发送成功后调用闲鱼无物流确认发货接口；如果平台返回已发货，也按成功处理。
 - `AUTO_RELIST_ENABLED=false`：发货后自动重新上架默认关闭；即使商品已配置 `listing auto-relist set`，未打开该开关也不会触发。
@@ -160,6 +205,10 @@ Playwright 路径会参考 `xianyu-auto-reply` 的页面初始化策略：先访
 - `AUTO_PUBLISH_PLAYWRIGHT_HEADLESS=true`：发布新商品浏览器执行器是否无头运行；也兼容旧的 `PLAYWRIGHT_HEADLESS`。
 
 普通聊天自动回复只对已配置商品生效：商品必须存在启用的发货配置，或存在启用的自动重新上架配置；未配置商品不会获取商品详情、不会进入 LLM，也不会发送自动回复。
+
+商品知识库使用本地 Markdown 文件维护，默认路径是 `data/item_knowledge/<item_id>.md`，例如 `data/item_knowledge/1030573156061.md`。自动回复生成前会把当前商品的 Markdown 知识库附加到商品信息后面，要求模型优先依据商品信息和知识库回答；如果商品信息和知识库都没有明确答案，应回复“这个我确认一下，稍后回复你”，不要编造。`ITEM_KNOWLEDGE_DIR` 可覆盖知识库目录，`ITEM_KNOWLEDGE_MAX_CHARS` 控制单个商品注入 prompt 的最大字符数。
+
+遇到兜底回复或明显不确定回复时，程序会把问题追加到 `UNKNOWN_QUESTIONS_PATH`，默认是 `data/unknown_questions.jsonl`。每行包含时间、商品 ID、会话 ID、用户问题、触发原因、机器人回复和意图，便于后续人工 review 后补进对应商品的 Markdown 知识库。该文件属于本地运行数据，不应提交。
 
 启用自动发货后，程序会监听“我已付款，等待你发货”“等待卖家发货”等付款完成消息，解析订单号、商品 ID、买家和会话，再按商品配置发货。未配置启用发货内容的商品会直接跳过，不会拉取订单详情或发送任何内容。同一订单已经写入 `sent` 日志后会跳过重复发送；如果 `AUTO_CONFIRM_DELIVERY_ENABLED=true` 且该订单尚无 `platform_confirmed` 或 `platform_already_delivered` 日志，程序会继续尝试在闲鱼订单侧确认无物流发货。`data` 库存会按订单购买数量先预占，发送成功后标记 `sent`，发送失败时保留为 `failed_retryable` 以便同一订单重试继续使用原 key。发货内容发送成功但平台确认发货失败时，结果会记录为 `sent_confirm_failed` 和 `platform_confirm_failed`，不会重复发送内容，也不会触发发货后自动重新上架；下次遇到同一订单付款消息时会只重试平台确认。发货成功后，如果同时开启 `AUTO_RELIST_ENABLED=true` 且该商品存在启用的 `auto-relist` 配置，程序会创建重新上架任务并记录目标库存；带目标库存的重新上架请求即使商品状态显示为 `active`，也会继续执行补库存/重新上架动作，不会用 `already_active` 早退。当 `AUTO_CONFIRM_DELIVERY_ENABLED=true` 时，平台确认失败会阻止这一步。如果允许 Playwright 但没有设置 `AUTO_RELIST_CONFIRM_PLAYWRIGHT=true`，任务会停在需要授权浏览器执行的结构化结果，不会点击页面；失败只影响重新上架任务日志，不回滚已发货结果。
 

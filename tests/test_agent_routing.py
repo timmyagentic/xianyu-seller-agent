@@ -31,6 +31,24 @@ class FakeRouter:
         return self.intent
 
 
+class FakeKnowledgeBase:
+    def __init__(self, context):
+        self.context = context
+        self.calls = []
+
+    def format_for_prompt(self, item_id):
+        self.calls.append(item_id)
+        return self.context
+
+
+class FakeUnknownQuestionLog:
+    def __init__(self):
+        self.entries = []
+
+    def append(self, **kwargs):
+        self.entries.append(kwargs)
+
+
 class FakeCompletions:
     def __init__(self):
         self.calls = []
@@ -103,6 +121,18 @@ def test_base_agent_uses_modelscope_default_model(monkeypatch):
     assert client.completions.calls[0]["model"] == "deepseek-ai/DeepSeek-V4-Pro"
 
 
+def test_base_agent_adds_fact_constraints_to_prompt():
+    client = FakeClient()
+    agent = BaseAgent(client, "系统提示", lambda text: text)
+
+    agent.generate("还有不", '{"total_stock": null}', "")
+
+    system_prompt = client.completions.calls[0]["messages"][0]["content"]
+    assert "事实约束" in system_prompt
+    assert "库存为 null、unknown 或缺失时，只表示未知" in system_prompt
+    assert "绝不能回复有优惠、折扣或赠品" in system_prompt
+
+
 def test_base_agent_allows_model_name_override(monkeypatch):
     monkeypatch.setenv("MODEL_NAME", "custom/model")
     client = FakeClient()
@@ -143,6 +173,26 @@ def test_intent_router_detects_price_without_llm():
     assert classifier.calls == []
 
 
+def test_intent_router_detects_common_discount_phrases_without_llm():
+    classifier = FakeClassifyAgent("default")
+    router = IntentRouter(classifier)
+
+    for message in [
+        "能优惠一点吗",
+        "有折扣吗",
+        "预算不够",
+        "能刀吗",
+        "学生党可以便宜吗",
+        "最低多少",
+        "能少一点吗",
+        "再低点可以吗",
+        "能让一点吗",
+        "打折吗",
+    ]:
+        assert router.detect(message, "商品", "") == "price"
+    assert classifier.calls == []
+
+
 def test_intent_router_falls_back_to_classifier():
     classifier = FakeClassifyAgent("no_reply")
     router = IntentRouter(classifier)
@@ -158,7 +208,49 @@ def test_reply_bot_safe_filter_blocks_off_platform_terms():
     assert bot._safe_filter("平台内沟通即可") == "平台内沟通即可"
 
 
-def test_reply_bot_generate_reply_uses_router_and_bargain_count():
+def test_reply_bot_refuses_discount_by_default_without_calling_price_agent(monkeypatch):
+    monkeypatch.delenv("NO_BARGAIN_MODE", raising=False)
+    bot = XianyuReplyBot.__new__(XianyuReplyBot)
+    bot.router = FakeRouter("price")
+    bot.agents = {
+        "classify": FakeReplyAgent("unused"),
+        "price": FakeReplyAgent("最低 10 元"),
+        "tech": FakeReplyAgent("tech"),
+        "default": FakeReplyAgent("default"),
+    }
+    bot.last_intent = None
+
+    reply = bot.generate_reply("能便宜点吗，我马上拍", "商品信息", [])
+
+    assert reply == "这个价格不议，当前标价就是最终价格。如能接受，可以直接拍。"
+    assert bot.last_intent == "price"
+    assert bot.agents["price"].calls == []
+
+
+def test_reply_bot_does_not_refuse_plain_price_questions_by_default(monkeypatch):
+    monkeypatch.delenv("NO_BARGAIN_MODE", raising=False)
+    bot = XianyuReplyBot.__new__(XianyuReplyBot)
+    bot.router = FakeRouter("price")
+    bot.agents = {
+        "classify": FakeReplyAgent("unused"),
+        "price": FakeReplyAgent("标价 99 元"),
+        "tech": FakeReplyAgent("tech"),
+        "default": FakeReplyAgent("default"),
+    }
+    bot.last_intent = None
+
+    for message in ["价格是多少？", "原价多少？"]:
+        bot.agents["price"].calls.clear()
+
+        reply = bot.generate_reply(message, "商品信息", [])
+
+        assert reply == "标价 99 元"
+        assert bot.last_intent == "price"
+        assert bot.agents["price"].calls
+
+
+def test_reply_bot_generate_reply_uses_router_and_bargain_count(monkeypatch):
+    monkeypatch.setenv("NO_BARGAIN_MODE", "false")
     bot = XianyuReplyBot.__new__(XianyuReplyBot)
     bot.router = FakeRouter("price")
     bot.agents = {
@@ -181,6 +273,36 @@ def test_reply_bot_generate_reply_uses_router_and_bargain_count():
     assert reply == "最低 10 元"
     assert bot.last_intent == "price"
     assert bot.agents["price"].calls[0]["bargain_count"] == 3
+
+
+def test_reply_bot_adds_item_knowledge_to_router_and_agent_context():
+    bot = XianyuReplyBot.__new__(XianyuReplyBot)
+    bot.router = FakeRouter("default")
+    bot.knowledge_base = FakeKnowledgeBase("【商品知识库】\n- token 限制：参考 Lite")
+    bot.unknown_question_log = FakeUnknownQuestionLog()
+    bot.agents = {
+        "classify": FakeReplyAgent("unused"),
+        "price": FakeReplyAgent("price"),
+        "tech": FakeReplyAgent("tech"),
+        "default": FakeReplyAgent("参考 Lite"),
+    }
+    bot.last_intent = None
+
+    reply = bot.generate_reply(
+        "有 token 限制吗",
+        "当前商品的信息如下：{}",
+        [],
+        item_id="item-1",
+        chat_id="chat-1",
+    )
+
+    assert reply == "参考 Lite"
+    assert bot.knowledge_base.calls == ["item-1"]
+    routed_item_desc = bot.router.calls[0][1]
+    assert "【商品知识库】" in routed_item_desc
+    assert "token 限制：参考 Lite" in routed_item_desc
+    assert bot.agents["default"].calls[0]["item_desc"] == routed_item_desc
+    assert bot.unknown_question_log.entries == []
 
 
 def test_reply_bot_returns_marker_for_no_reply_intent():
@@ -212,3 +334,72 @@ def test_reply_bot_returns_fallback_when_reply_llm_has_no_choices():
 
     assert bot.generate_reply("这个可以用 GLM 5.2 吗", "商品信息", []) == "这个我确认一下，稍后回复你"
     assert bot.last_intent == "tech"
+
+
+def test_reply_bot_logs_unknown_when_reply_generation_falls_back():
+    bot = XianyuReplyBot.__new__(XianyuReplyBot)
+    bot.router = FakeRouter("tech")
+    bot.knowledge_base = FakeKnowledgeBase("")
+    bot.unknown_question_log = FakeUnknownQuestionLog()
+    client = FakeNoChoicesClient()
+    bot.agents = {
+        "classify": FakeReplyAgent("unused"),
+        "price": FakeReplyAgent("price"),
+        "tech": TechAgent(client, "系统提示", lambda text: text),
+        "default": FakeReplyAgent("default"),
+    }
+    bot.last_intent = None
+
+    reply = bot.generate_reply(
+        "这个支持 GLM 5.2 吗",
+        "商品信息",
+        [],
+        item_id="item-1",
+        chat_id="chat-1",
+    )
+
+    assert reply == "这个我确认一下，稍后回复你"
+    assert bot.unknown_question_log.entries == [
+        {
+            "item_id": "item-1",
+            "chat_id": "chat-1",
+            "question": "这个支持 GLM 5.2 吗",
+            "reason": "reply_generation_failed",
+            "reply": "这个我确认一下，稍后回复你",
+            "intent": "tech",
+        }
+    ]
+
+
+def test_reply_bot_logs_unknown_when_reply_is_uncertain():
+    bot = XianyuReplyBot.__new__(XianyuReplyBot)
+    bot.router = FakeRouter("default")
+    bot.knowledge_base = FakeKnowledgeBase("")
+    bot.unknown_question_log = FakeUnknownQuestionLog()
+    bot.agents = {
+        "classify": FakeReplyAgent("unused"),
+        "price": FakeReplyAgent("price"),
+        "tech": FakeReplyAgent("tech"),
+        "default": FakeReplyAgent("这个我确认一下，稍后回复你"),
+    }
+    bot.last_intent = None
+
+    reply = bot.generate_reply(
+        "在哪兑换",
+        "商品信息",
+        [],
+        item_id="item-1",
+        chat_id="chat-1",
+    )
+
+    assert reply == "这个我确认一下，稍后回复你"
+    assert bot.unknown_question_log.entries == [
+        {
+            "item_id": "item-1",
+            "chat_id": "chat-1",
+            "question": "在哪兑换",
+            "reason": "uncertain_reply",
+            "reply": "这个我确认一下，稍后回复你",
+            "intent": "default",
+        }
+    ]
