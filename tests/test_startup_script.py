@@ -113,8 +113,41 @@ def test_startup_script_doctor_flags_processes_outside_project_root(tmp_path):
     result = subprocess.run([str(SCRIPT), "doctor"], cwd=ROOT, env=env, capture_output=True, text=True)
 
     assert result.returncode == 0
-    assert f"warning: pid 123 cwd is outside PROJECT_ROOT: {stale_root}" in result.stdout
+    assert f"warning: pid 123 cwd is not stable PROJECT_ROOT: {stale_root}" in result.stdout
     assert f"pid 456 cwd: {root}" in result.stdout
+
+
+def test_startup_script_doctor_flags_project_local_worktree_processes(tmp_path):
+    root = tmp_path / "repo"
+    worktree_root = root / ".worktrees" / "runtime-doctor"
+    fake_bin = tmp_path / "bin"
+    root.mkdir()
+    fake_bin.mkdir()
+    worktree_root.mkdir(parents=True)
+    (root / "main.py").write_text("print('placeholder')\n", encoding="utf-8")
+    (fake_bin / "ps").write_text(
+        "#!/usr/bin/env bash\n"
+        "printf ' 123 python main.py\\n'\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "lsof").write_text(
+        "#!/usr/bin/env bash\n"
+        "case \"$*\" in\n"
+        "  *'-p 123'*'-d cwd'*) printf 'p123\\nn%s\\n' \"$WORKTREE_ROOT\" ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    for fake in fake_bin.iterdir():
+        fake.chmod(0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+    env["XIANYU_AGENT_ROOT"] = str(root)
+    env["WORKTREE_ROOT"] = str(worktree_root)
+    result = subprocess.run([str(SCRIPT), "doctor"], cwd=ROOT, env=env, capture_output=True, text=True)
+
+    assert result.returncode == 0
+    assert f"warning: pid 123 cwd is not stable PROJECT_ROOT: {worktree_root}" in result.stdout
 
 
 def test_startup_script_doctor_continues_when_process_cwd_is_unavailable(tmp_path):
@@ -147,6 +180,39 @@ def test_startup_script_doctor_continues_when_process_cwd_is_unavailable(tmp_pat
     assert result.returncode == 0
     assert "pid 123 cwd: unknown" in result.stdout
     assert "web_port_8765: listening pid(s): 456" in result.stdout
+
+
+def test_startup_script_doctor_uses_web_port_from_project_env_file(tmp_path):
+    root = tmp_path / "repo"
+    fake_bin = tmp_path / "bin"
+    root.mkdir()
+    fake_bin.mkdir()
+    (root / "main.py").write_text("print('placeholder')\n", encoding="utf-8")
+    (root / ".env").write_text("WEB_PORT=9876\nCOOKIES_STR=secret-cookie-value\n", encoding="utf-8")
+    (fake_bin / "ps").write_text(
+        "#!/usr/bin/env bash\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "lsof").write_text(
+        "#!/usr/bin/env bash\n"
+        "case \"$*\" in\n"
+        "  *'-iTCP:9876'*) printf '789\\n' ;;\n"
+        "  *'-iTCP:8765'*) exit 1 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    for fake in fake_bin.iterdir():
+        fake.chmod(0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+    env["XIANYU_AGENT_ROOT"] = str(root)
+    result = subprocess.run([str(SCRIPT), "doctor"], cwd=ROOT, env=env, capture_output=True, text=True)
+
+    assert result.returncode == 0
+    assert "secret-cookie-value" not in result.stdout
+    assert "web_port_9876: listening pid(s): 789" in result.stdout
+    assert "web_port_8765" not in result.stdout
 
 
 def test_startup_script_setup_installs_requirements_for_existing_venv(tmp_path):

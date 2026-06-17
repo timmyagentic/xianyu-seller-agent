@@ -171,9 +171,41 @@ process_cwd() {
   { lsof -a -p "$pid" -d cwd -Fn 2>/dev/null || true; } | sed -n 's/^n//p' | head -n 1
 }
 
-cwd_is_project_root() {
+cwd_is_stable_project_root() {
   local cwd="$1"
-  [[ "$cwd" == "$PROJECT_ROOT" || "$cwd" == "$PROJECT_ROOT/"* ]]
+  [[ "$cwd" == "$PROJECT_ROOT" ]]
+}
+
+env_file_value() {
+  local key="$1"
+  [[ -f "$PROJECT_ROOT/.env" ]] || return 0
+  local line value
+  line="$(grep -E "^[[:space:]]*${key}=" "$PROJECT_ROOT/.env" 2>/dev/null | tail -n 1 || true)"
+  [[ -n "$line" ]] || return 0
+  value="${line#*=}"
+  value="${value%%#*}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  value="${value%$'\r'}"
+  value="${value%\"}"
+  value="${value#\"}"
+  value="${value%\'}"
+  value="${value#\'}"
+  printf '%s\n' "$value"
+}
+
+configured_web_port() {
+  if [[ -n "${WEB_PORT:-}" ]]; then
+    printf '%s\n' "$WEB_PORT"
+    return
+  fi
+  local port
+  port="$(env_file_value WEB_PORT)"
+  if [[ -n "$port" ]]; then
+    printf '%s\n' "$port"
+  else
+    printf '8765\n'
+  fi
 }
 
 print_runtime_processes() {
@@ -186,8 +218,8 @@ print_runtime_processes() {
     cwd="$(process_cwd "$pid")"
     if [[ -n "$cwd" ]]; then
       echo "pid $pid cwd: $cwd"
-      if ! cwd_is_project_root "$cwd"; then
-        echo "warning: pid $pid cwd is outside PROJECT_ROOT: $cwd"
+      if ! cwd_is_stable_project_root "$cwd"; then
+        echo "warning: pid $pid cwd is not stable PROJECT_ROOT: $cwd"
       fi
     else
       echo "pid $pid cwd: unknown"
@@ -201,12 +233,14 @@ print_runtime_processes() {
 }
 
 print_web_port_status() {
+  local port
   local pids
-  pids="$(lsof -nP -iTCP:8765 -sTCP:LISTEN -t 2>/dev/null || true)"
+  port="$(configured_web_port)"
+  pids="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null || true)"
   if [[ -n "$pids" ]]; then
-    echo "web_port_8765: listening pid(s): ${pids//$'\n'/ }"
+    echo "web_port_$port: listening pid(s): ${pids//$'\n'/ }"
   else
-    echo "web_port_8765: not listening"
+    echo "web_port_$port: not listening"
   fi
 }
 
