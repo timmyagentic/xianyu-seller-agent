@@ -4,6 +4,8 @@ import os
 from openai import OpenAI
 from loguru import logger
 
+from services.messages.knowledge import ItemKnowledgeBase, UnknownQuestionLog, looks_like_unknown_reply
+
 
 DEFAULT_MODEL_BASE_URL = "https://api-inference.modelscope.cn/v1"
 DEFAULT_MODEL_NAME = "deepseek-ai/DeepSeek-V4-Pro"
@@ -38,12 +40,14 @@ class LLMResponseError(RuntimeError):
 
 
 class XianyuReplyBot:
-    def __init__(self):
+    def __init__(self, knowledge_base=None, unknown_question_log=None):
         # 初始化OpenAI客户端
         self.client = OpenAI(
             api_key=os.getenv("API_KEY"),
             base_url=os.getenv("MODEL_BASE_URL", DEFAULT_MODEL_BASE_URL),
         )
+        self.knowledge_base = knowledge_base or ItemKnowledgeBase()
+        self.unknown_question_log = unknown_question_log or UnknownQuestionLog()
         self._init_system_prompts()
         self._init_agents()
         self.router = IntentRouter(self.agents['classify'])
@@ -104,12 +108,21 @@ class XianyuReplyBot:
         user_assistant_msgs = [msg for msg in context if msg['role'] in ['user', 'assistant']]
         return "\n".join([f"{msg['role']}: {msg['content']}" for msg in user_assistant_msgs])
 
-    def generate_reply(self, user_msg: str, item_desc: str, context: List[Dict]) -> str:
+    def generate_reply(
+        self,
+        user_msg: str,
+        item_desc: str,
+        context: List[Dict] | None,
+        item_id: str | None = None,
+        chat_id: str | None = None,
+    ) -> str:
         """生成回复主流程"""
         # 记录用户消息
         # logger.debug(f'用户所发消息: {user_msg}')
         
+        context = context or []
         formatted_context = self.format_history(context)
+        item_desc = self._append_item_knowledge(item_desc, item_id)
         # logger.debug(f'对话历史: {formatted_context}')
         
         # 1. 路由决策
@@ -148,15 +161,68 @@ class XianyuReplyBot:
 
         # 4. 生成回复
         try:
-            return agent.generate(
+            reply = agent.generate(
                 user_msg=user_msg,
                 item_desc=item_desc,
                 context=formatted_context,
                 bargain_count=bargain_count
             )
+            if looks_like_unknown_reply(reply):
+                self._record_unknown_question(
+                    item_id=item_id,
+                    chat_id=chat_id,
+                    user_msg=user_msg,
+                    reason="uncertain_reply",
+                    reply=reply,
+                )
+            return reply
         except LLMResponseError as e:
             logger.warning(f"回复生成失败，使用兜底回复: {e}")
+            self._record_unknown_question(
+                item_id=item_id,
+                chat_id=chat_id,
+                user_msg=user_msg,
+                reason="reply_generation_failed",
+                reply=FALLBACK_REPLY,
+            )
             return FALLBACK_REPLY
+
+    def _append_item_knowledge(self, item_desc: str, item_id: str | None) -> str:
+        knowledge_base = getattr(self, "knowledge_base", None)
+        if not knowledge_base or not item_id:
+            return item_desc
+        try:
+            knowledge_context = knowledge_base.format_for_prompt(item_id)
+        except Exception as exc:
+            logger.warning(f"加载商品知识库失败: item_id={item_id}, error={exc}")
+            return item_desc
+        if not knowledge_context:
+            return item_desc
+        return f"{item_desc}\n\n{knowledge_context}"
+
+    def _record_unknown_question(
+        self,
+        *,
+        item_id: str | None,
+        chat_id: str | None,
+        user_msg: str,
+        reason: str,
+        reply: str,
+    ) -> None:
+        unknown_question_log = getattr(self, "unknown_question_log", None)
+        if not unknown_question_log:
+            return
+        try:
+            unknown_question_log.append(
+                item_id=item_id,
+                chat_id=chat_id,
+                question=user_msg,
+                reason=reason,
+                reply=reply,
+                intent=self.last_intent,
+            )
+        except Exception as exc:
+            logger.warning(f"记录未知问题失败: item_id={item_id}, error={exc}")
 
     def _is_bargain_request(self, user_msg: str) -> bool:
         text_clean = re.sub(r'[^\w\u4e00-\u9fa5]', '', user_msg or '')

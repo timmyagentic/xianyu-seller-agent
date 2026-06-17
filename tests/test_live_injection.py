@@ -111,8 +111,16 @@ class FakeReplyBot:
         self.calls = []
         self.last_intent = "default"
 
-    def generate_reply(self, user_msg, item_desc, context=None):
-        self.calls.append({"user_msg": user_msg, "item_desc": item_desc, "context": context})
+    def generate_reply(self, user_msg, item_desc, context=None, item_id=None, chat_id=None):
+        self.calls.append(
+            {
+                "user_msg": user_msg,
+                "item_desc": item_desc,
+                "context": context,
+                "item_id": item_id,
+                "chat_id": chat_id,
+            }
+        )
         return "自动回复"
 
 
@@ -218,6 +226,8 @@ def test_xianyu_live_allows_chat_reply_for_configured_item(tmp_path):
     asyncio.run(live.handle_incoming_message(incoming, websocket))
 
     assert len(live.reply_bot.calls) == 1
+    assert live.reply_bot.calls[0]["item_id"] == "item-1"
+    assert live.reply_bot.calls[0]["chat_id"] == "chat-1"
     assert any(payload["lwp"] == "/r/MessageStatus/read" for payload in websocket.sent)
 
 

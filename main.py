@@ -688,7 +688,9 @@ class XianyuLive:
             bot_reply = self.reply_bot.generate_reply(
                 send_message,
                 item_description,
-                context=context
+                context=context,
+                item_id=item_id,
+                chat_id=chat_id,
             )
             bot_reply = self.guard_fact_reply(
                 bot_reply,
