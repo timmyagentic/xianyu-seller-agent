@@ -197,6 +197,28 @@ def test_reply_bot_refuses_discount_by_default_without_calling_price_agent(monke
     assert bot.agents["price"].calls == []
 
 
+def test_reply_bot_does_not_refuse_plain_price_questions_by_default(monkeypatch):
+    monkeypatch.delenv("NO_BARGAIN_MODE", raising=False)
+    bot = XianyuReplyBot.__new__(XianyuReplyBot)
+    bot.router = FakeRouter("price")
+    bot.agents = {
+        "classify": FakeReplyAgent("unused"),
+        "price": FakeReplyAgent("标价 99 元"),
+        "tech": FakeReplyAgent("tech"),
+        "default": FakeReplyAgent("default"),
+    }
+    bot.last_intent = None
+
+    for message in ["价格是多少？", "原价多少？"]:
+        bot.agents["price"].calls.clear()
+
+        reply = bot.generate_reply(message, "商品信息", [])
+
+        assert reply == "标价 99 元"
+        assert bot.last_intent == "price"
+        assert bot.agents["price"].calls
+
+
 def test_reply_bot_generate_reply_uses_router_and_bargain_count(monkeypatch):
     monkeypatch.setenv("NO_BARGAIN_MODE", "false")
     bot = XianyuReplyBot.__new__(XianyuReplyBot)
