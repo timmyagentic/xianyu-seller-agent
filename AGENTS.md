@@ -31,7 +31,7 @@ python main.py
 
 历史提交使用 Conventional Commit，例如 `docs: initialize xianyu seller agent`。继续使用 `docs:`、`feat:`、`fix:`、`test:`、`refactor:`。PR 必须说明参考了哪个源项目文件、做了哪些裁剪、运行了哪些验证，以及是否涉及 `.env`、Cookie、发货或发布风险。
 
-每个需求都必须从最新 `origin/main` 新开独立 git worktree 和 `codex/` 前缀分支执行，不要直接在主工作区或 `main` 上改需求。推荐 worktree 位置为 `/Volumes/SamsungDisk/Code/.worktrees/xianyu-seller-agent-<short-slug>`。完成后必须 push 分支并新建 PR；PR 合并后再快进本地主工作区并清理对应 worktree、本地分支和远端分支。
+每个需求都必须从最新 `origin/main` 新开独立 git worktree 和 `codex/` 前缀分支执行，不要直接在主工作区或 `main` 上改需求。推荐 worktree 位置为项目内 `.worktrees/<short-slug>`，例如 `/Volumes/SamsungDisk/Code/xianyu-seller-agent/.worktrees/runtime-doctor`；`.worktrees/` 必须保持在 `.gitignore` 中。完成后必须 push 分支并新建 PR；PR 合并后再快进本地主工作区并清理对应 worktree、本地分支和远端分支。
 
 ## 安全与配置
 

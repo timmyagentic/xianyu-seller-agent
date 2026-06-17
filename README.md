@@ -122,6 +122,8 @@ python main.py
 
 删除任何临时 worktree 前，先在主仓库执行 `./scripts/xianyu-service.sh doctor`。如果仍有 `pid ... cwd is outside PROJECT_ROOT` 警告，先停止或迁移对应进程，再清理 worktree。
 
+后续新建开发 worktree 时，统一放在项目内 `.worktrees/<short-slug>`，例如 `/Volumes/SamsungDisk/Code/xianyu-seller-agent/.worktrees/runtime-doctor`。不要再把本项目的新 worktree 放到 `/Volumes/SamsungDisk/Code/.worktrees` 这种跨项目外层目录；历史计划中出现的外层 worktree 路径只作为过期记录保留。
+
 可选覆盖项：
 
 ```bash
