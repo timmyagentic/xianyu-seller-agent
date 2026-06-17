@@ -29,7 +29,7 @@
 
 当前项目绑定的闲鱼账号已经开通鱼小铺。涉及平台侧多库存、商品管理库存列、鱼小铺发布能力时，应优先使用 `https://seller.goofish.com` 卖家工作台路径验证；普通重新发布仍可使用 `https://www.goofish.com/publish?itemId=...&editScene=rePutOn` 作为 fallback，但这个普通页面没有库存输入框时，不能继续点击发布并声称库存已同步。
 
-真实验证结果显示，鱼小铺商品管理入口是 `https://seller.goofish.com/?site=COMMONPRO#/seller-item/goods-manage`，可以看到商品 `1030573156061 / 智谱 GLM coding plan`、库存列和当前库存值；旧的 `#/seller-item` 会落到无效微应用，不应再作为默认商品管理路由。鱼小铺发布入口可配置为 `https://seller.goofish.com/?site=COMMONPRO#/seller-item/publish`，参考项目中该页面包含库存输入策略。后续如果更换为未开通鱼小铺的账号，再回退到普通账号路径。
+真实验证结果显示，鱼小铺商品管理入口是 `https://seller.goofish.com/?site=COMMONPRO#/seller-item/goods-manage`，可用于查找商品；但售出商品如果需要带库存重新发布，应使用 `https://seller.goofish.com/?site=COMMONPRO#/seller-item/publish?itemId=...&editScene=rePutOn`。普通重新发布页 `https://www.goofish.com/publish?itemId=...&editScene=rePutOn` 可作为无库存要求的 fallback；旧的 `#/seller-item` 会落到无效微应用，不应再作为默认商品管理路由。后续如果更换为未开通鱼小铺的账号，再回退到普通账号路径。
 
 ## 参考项目职责
 
@@ -178,11 +178,11 @@ python main.py listing status
 
 `listing content-version add/list` 用于记录商品标题、描述、价格和库存的本地版本历史，写入 `DB_PATH` 指向的 SQLite `listing_content_versions` 表，默认是 `data/chat_history.db`。这类真实商品信息不提交到 Git；`docs/listings/` 已加入忽略规则，临时文案草稿应放本地或通过 CLI 写入数据库。
 
-`listing relist-preflight` 会在不点击、不填库存、不写 `listing_jobs` 的前提下打开授权浏览器做页面预检：先刷新单商品真实状态，再进入普通发布页的重新发布路由 `https://www.goofish.com/publish?itemId=...&editScene=rePutOn`，检查页面是否能看到目标商品和发布入口。它用于真实执行前收集页面证据；遇到登录、滑块、验证码、风控、找不到商品或找不到按钮时只返回结构化失败。为便于排查页面不可执行原因，preflight 会输出安全的 `page_evidence`，包括当前 URL、页面标题、正文长度、命中的状态标记和 input/button 数量，但不会输出完整页面正文。
+`listing relist-preflight` 会在不点击、不填库存、不写 `listing_jobs` 的前提下打开授权浏览器做页面预检：先刷新单商品真实状态，再进入重新发布路由，检查页面是否能看到目标商品和发布入口。无目标库存时默认使用普通发布页 `https://www.goofish.com/publish?itemId=...&editScene=rePutOn`；带 `--stock` 时默认使用鱼小铺 seller 发布页 `https://seller.goofish.com/?site=COMMONPRO#/seller-item/publish?itemId=...&editScene=rePutOn`，因为当前账号的普通页可能没有库存输入框。它用于真实执行前收集页面证据；遇到登录、滑块、验证码、风控、找不到商品或找不到按钮时只返回结构化失败。为便于排查页面不可执行原因，preflight 会输出安全的 `page_evidence`，包括当前 URL、页面标题、正文长度、命中的状态标记和 input/button 数量，但不会输出完整页面正文。
 
 `listing relist` 会在 `COOKIES_STR` 存在时先通过当前账号刷新商品真实状态：优先查询在售列表，未命中时再用商品详情接口兜底，避免本地旧快照把下架/售出商品误判为 `already_active`。如果配置了 `XIANYU_RELIST_API`，会按 `xianyu-auto-reply` 的 seller mtop 操作模式签名调用该接口；未配置或 API 失败时，默认记录 `manual_required`。只传 `--allow-playwright` 时不会点击页面，只会在任务中记录需要授权浏览器执行；只有同时传入 `--allow-playwright --confirm-real-relist`，CLI 才会创建真实 Playwright 执行器。
 
-授权 Playwright 执行器只处理“普通重新发布页已打开目标商品并出现发布入口”的场景：它会尝试设置目标库存、点击“发布/立即发布”，并且只有页面出现“操作成功/发布成功/上架成功/已上架/在售”等确认文本后才记录 `relisted`。普通闲鱼账号的重新发布页可能没有库存输入框；这种情况下 `--stock` 会保留在本地任务和 API 边界里，但不会伪造平台库存修改成功。如果检测到登录页、滑块、验证码、风控提示、找不到目标商品、找不到按钮或点击后没有确认结果，会记录 `playwright_required` 和失败原因，必要时保存截图到 `AUTO_RELIST_SCREENSHOT_DIR`。`--stock` 会作为目标库存写入任务，并传递给 mtop API 或授权浏览器执行器。mtop API 或 Playwright 确认成功后，服务会再尝试刷新一次单商品真实状态，把执行后状态写入本地快照、`listing_jobs.final_status`、响应摘要和 `listing_jobs.evidence_json`；如果刷新失败，则保留平台动作确认结果。`evidence_json` 会脱敏记录请求摘要、执行前状态、动作来源、Playwright 页面证据和执行后状态，便于 `listing status` 审计。
+授权 Playwright 执行器只处理“重新发布页已打开目标商品并出现发布入口”的场景：它会尝试设置目标库存、点击“发布/立即发布”，并且只有页面出现“操作成功/发布成功/上架成功/已上架/在售”等确认文本后才记录 `relisted`。普通闲鱼账号的重新发布页可能没有库存输入框；这种情况下 `--stock` 会保留在本地任务和 API 边界里，但不会伪造平台库存修改成功。当前鱼小铺账号带库存重新发布默认走 seller publish rePutOn 路由，并会在点击前校验库存输入框真实写入目标值。如果检测到登录页、滑块、验证码、风控提示、找不到目标商品、找不到按钮或点击后没有确认结果，会记录 `playwright_required` 和失败原因，必要时保存截图到 `AUTO_RELIST_SCREENSHOT_DIR`。`--stock` 会作为目标库存写入任务，并传递给 mtop API 或授权浏览器执行器。mtop API 或 Playwright 确认成功后，服务会再尝试刷新一次单商品真实状态，把执行后状态写入本地快照、`listing_jobs.final_status`、响应摘要和 `listing_jobs.evidence_json`；如果刷新失败，则保留平台动作确认结果。`evidence_json` 会脱敏记录请求摘要、执行前状态、动作来源、Playwright 页面证据和执行后状态，便于 `listing status` 审计。
 
 `listing auto-relist set` 用于配置“发货成功后自动重新上架”的商品级策略。运行时还必须开启 `AUTO_RELIST_ENABLED=true`；否则配置只会保存，不会在付款发货后触发。
 
@@ -209,7 +209,7 @@ Playwright 路径会参考 `xianyu-auto-reply` 的页面初始化策略：先访
 - `AUTO_RELIST_CONFIRM_PLAYWRIGHT=false`：发货后自动重新上架的真实浏览器点击确认开关；只有同时允许 Playwright 且该开关为 `true` 时，后台 hook 才会创建真实执行器。
 - `AUTO_RELIST_SCREENSHOT_DIR=data/relist-screenshots`：授权浏览器路径保存页面证据的本地目录，默认不提交。
 - `AUTO_RELIST_PLAYWRIGHT_HEADLESS=true`：重新上架浏览器执行器是否无头运行；也兼容旧的 `PLAYWRIGHT_HEADLESS`。
-- `AUTO_RELIST_MANAGEMENT_URL=`：可选覆盖重新上架 Playwright 目标页。鱼小铺多库存排查可设为 `https://seller.goofish.com/?site=COMMONPRO#/seller-item/goods-manage`；普通重新发布 fallback 为空即可使用 `www.goofish.com/publish?itemId=...&editScene=rePutOn`。
+- `AUTO_RELIST_MANAGEMENT_URL=`：可选覆盖重新上架 Playwright 目标页。为空时，无目标库存默认使用 `www.goofish.com/publish?itemId=...&editScene=rePutOn`；带目标库存默认使用 `https://seller.goofish.com/?site=COMMONPRO#/seller-item/publish?itemId=...&editScene=rePutOn`。商品管理排查可临时设为 `https://seller.goofish.com/?site=COMMONPRO#/seller-item/goods-manage`，但它不一定提供重新发布按钮。
 - `AUTO_PUBLISH_URL=`：可选覆盖新商品发布 Playwright 目标页。鱼小铺发布可设为 `https://seller.goofish.com/?site=COMMONPRO#/seller-item/publish`；为空时使用普通 `www.goofish.com/publish`。
 - `AUTO_PUBLISH_SCREENSHOT_DIR=data/publish-screenshots`：发布新商品浏览器路径保存页面证据的本地目录，默认不提交。
 - `AUTO_PUBLISH_PLAYWRIGHT_HEADLESS=true`：发布新商品浏览器执行器是否无头运行；也兼容旧的 `PLAYWRIGHT_HEADLESS`。

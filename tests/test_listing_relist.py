@@ -3,7 +3,11 @@ import json
 
 from services.delivery.store import DeliveryStore
 from services.listing.models import ItemSnapshot, RelistApiResult
-from services.listing.playwright_relist import build_playwright_relist_command
+from services.listing.playwright_relist import (
+    SELLER_MANAGEMENT_URL,
+    SELLER_PUBLISH_RELIST_URL,
+    build_playwright_relist_command,
+)
 from services.listing.relist import RelistService, load_relist_request
 from services.listing.store import ListingStore
 
@@ -392,10 +396,16 @@ def test_playwright_fallback_command_is_constructed_without_running_browser():
 
     assert command.item_id == "item-1"
     assert command.expected_title == "资料包"
-    assert "www.goofish.com/publish" in command.management_url
-    assert "editScene=rePutOn" in command.management_url
+    assert command.management_url == SELLER_MANAGEMENT_URL
     assert command.cookie_domains == (
         ".goofish.com",
         ".taobao.com",
         ".alipay.com",
     )
+
+
+def test_playwright_fallback_command_uses_seller_publish_route_when_stock_set():
+    command = build_playwright_relist_command(item_id="item-1", expected_title="资料包", target_stock=7)
+
+    assert command.target_stock == 7
+    assert command.management_url == SELLER_PUBLISH_RELIST_URL

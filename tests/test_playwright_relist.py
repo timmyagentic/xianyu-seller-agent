@@ -5,6 +5,7 @@ from services.listing.playwright_relist import (
     LOGIN_CONTEXT_URL,
     SELLER_HOME_URL,
     SELLER_MANAGEMENT_URL,
+    SELLER_PUBLISH_RELIST_URL,
     PlaywrightRelistExecutor,
 )
 
@@ -14,6 +15,7 @@ class FakeElement:
         self.on_click = on_click
         self.clicked = False
         self.filled_values = []
+        self.value = ""
 
     async def is_visible(self):
         return True
@@ -28,9 +30,13 @@ class FakeElement:
 
     async def fill(self, value):
         self.filled_values.append(value)
+        self.value = value
 
     async def press(self, key):
         return None
+
+    async def input_value(self):
+        return self.value
 
 
 class FakePage:
@@ -122,7 +128,10 @@ class FakePage:
             return self.relist_button
         if (
             ("发布" in selector or "submit" in selector)
-            and "www.goofish.com/publish" in self.url
+            and (
+                "www.goofish.com/publish" in self.url
+                or ("seller.goofish.com" in self.url and "seller-item/publish" in self.url)
+            )
             and "editScene=rePutOn" in self.url
             and "发布" in self.body_text
         ):
@@ -319,6 +328,52 @@ def test_playwright_preview_does_not_treat_seller_publish_button_as_relist_actio
     assert result["item_found"] is True
     assert result["relist_button_found"] is False
     assert page.relist_button.clicked is False
+
+
+def test_playwright_executor_treats_seller_publish_reputon_button_as_relist_action():
+    page = FakePage(
+        body_text="商品发布 item-1 资料包 库存 发布",
+        url=SELLER_PUBLISH_RELIST_URL.format(item_id="item-1"),
+        title="商品发布 - 闲鱼卖家工作台",
+        confirm_after_click=False,
+        post_click_url="https://seller.goofish.com/?site=COMMONPRO#/seller-item/publish/success?itemId=item-1",
+        post_click_body_text="查看商品 编辑商品",
+    )
+    executor = PlaywrightRelistExecutor(
+        cookies_str="unb=seller-1; _m_h5_tk=token_123",
+        page_provider=lambda: page,
+        management_url=SELLER_PUBLISH_RELIST_URL,
+    )
+
+    result = asyncio.run(executor.relist(RelistRequest(item_id="item-1", expected_title="资料包", target_stock=4)))
+
+    assert result.success is True
+    assert result.final_status == "active"
+    assert page.stock_input.filled_values[-1] == "4"
+    assert page.relist_button.clicked is True
+    assert result.evidence["pre_action_page"]["url"] == SELLER_PUBLISH_RELIST_URL.format(item_id="item-1")
+
+
+def test_playwright_preview_treats_seller_publish_reputon_button_as_actionable():
+    page = FakePage(
+        body_text="商品发布 item-1 资料包 库存 发布",
+        url=SELLER_PUBLISH_RELIST_URL.format(item_id="item-1"),
+        title="商品发布 - 闲鱼卖家工作台",
+    )
+    executor = PlaywrightRelistExecutor(
+        cookies_str="unb=seller-1; _m_h5_tk=token_123",
+        page_provider=lambda: page,
+        management_url=SELLER_PUBLISH_RELIST_URL,
+    )
+
+    result = asyncio.run(executor.preview(RelistRequest(item_id="item-1", expected_title="资料包", target_stock=4)))
+
+    assert result["success"] is True
+    assert result["relist_button_found"] is True
+    assert result["publish_button_found"] is True
+    assert result["stock_input_found"] is True
+    assert page.relist_button.clicked is False
+    assert page.stock_input.filled_values == []
 
 
 def test_playwright_preview_stops_on_risk_control_without_clicking():

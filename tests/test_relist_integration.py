@@ -6,6 +6,7 @@ from main import XianyuLive, run_cli
 from services.delivery.orders import OrderInfo
 from services.delivery.service import DeliveryResult
 from services.listing.models import RelistResult
+from services.listing.playwright_relist import SELLER_PUBLISH_RELIST_URL
 from services.listing.store import ListingStore
 
 
@@ -151,6 +152,34 @@ def test_listing_relist_executor_uses_configured_management_url(tmp_path, monkey
     )
 
 
+def test_listing_relist_executor_defaults_to_seller_publish_route_when_stock_set(tmp_path, monkeypatch, capsys):
+    FakeRelistService.instances = []
+    FakePlaywrightExecutor.instances = []
+    monkeypatch.setenv("COOKIES_STR", "unb=seller-1; _m_h5_tk=token_123")
+    monkeypatch.delenv("AUTO_RELIST_MANAGEMENT_URL", raising=False)
+    monkeypatch.setattr(main, "XianyuApis", FakeApi)
+    monkeypatch.setattr(main, "RelistService", FakeRelistService)
+    monkeypatch.setattr(main, "PlaywrightRelistExecutor", FakePlaywrightExecutor)
+
+    exit_code = run_cli(
+        [
+            "listing",
+            "--db-path",
+            str(tmp_path / "listing.db"),
+            "relist",
+            "--item-id",
+            "item-1",
+            "--stock",
+            "7",
+            "--allow-playwright",
+            "--confirm-real-relist",
+        ]
+    )
+
+    assert exit_code == 0
+    assert FakePlaywrightExecutor.instances[0].kwargs["management_url"] == SELLER_PUBLISH_RELIST_URL
+
+
 def test_listing_relist_preflight_uses_live_status_and_preview_executor(tmp_path, monkeypatch, capsys):
     FakePlaywrightExecutor.instances = []
 
@@ -199,6 +228,7 @@ def test_listing_relist_preflight_uses_live_status_and_preview_executor(tmp_path
     assert payload["playwright"]["relist_button_found"] is True
     assert payload["playwright"]["would_fill_stock"] == 7
     assert FakePlaywrightExecutor.instances[0].kwargs["cookies_str"]
+    assert FakePlaywrightExecutor.instances[0].kwargs["management_url"] == SELLER_PUBLISH_RELIST_URL
 
 
 def test_post_delivery_relist_allow_playwright_does_not_create_executor_without_confirm(tmp_path, monkeypatch):
@@ -267,6 +297,7 @@ def test_post_delivery_relist_confirm_playwright_creates_authorized_executor(tmp
     assert service.kwargs["allow_playwright"] is True
     assert isinstance(service.kwargs["relist_executor"], FakePlaywrightExecutor)
     assert service.kwargs["relist_executor"].kwargs["cookies_str"]
+    assert service.kwargs["relist_executor"].kwargs["management_url"] == SELLER_PUBLISH_RELIST_URL
     assert service.requests[0]["target_stock"] == 7
 
 
