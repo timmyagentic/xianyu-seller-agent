@@ -97,6 +97,7 @@ python main.py
 ./scripts/xianyu-service.sh qr-login
 ./scripts/xianyu-service.sh start
 ./scripts/xianyu-service.sh status
+./scripts/xianyu-service.sh doctor
 ./scripts/xianyu-service.sh logs
 ./scripts/xianyu-service.sh restart
 ./scripts/xianyu-service.sh stop
@@ -105,10 +106,11 @@ python main.py
 常用流程：
 
 1. 在主仓库 `/Volumes/SamsungDisk/Code/xianyu-seller-agent` 执行 `./scripts/xianyu-service.sh setup` 创建或修复 `.venv`。
-2. 如果 `.env` 里没有有效 `COOKIES_STR`，执行 `./scripts/xianyu-service.sh qr-login` 扫码登录。
+2. `.env` 只放主仓库根目录 `/Volumes/SamsungDisk/Code/xianyu-seller-agent/.env`，不提交、不放临时 worktree。若主仓库 `.env` 里没有有效 `COOKIES_STR`，执行 `./scripts/xianyu-service.sh qr-login` 扫码登录。
 3. 执行 `./scripts/xianyu-service.sh start` 同时启动 live 和 web。
 4. 执行 `./scripts/xianyu-service.sh status` 查看两个 `screen` 会话是否在跑。
-5. 执行 `./scripts/xianyu-service.sh logs` 查看 `logs/live.log` 和 `logs/web.log`。
+5. 执行 `./scripts/xianyu-service.sh doctor` 检查 live/web 进程的 cwd 是否仍在主仓库、8765 端口是否被 web 占用，以及是否存在旧 worktree 遗留进程。
+6. 执行 `./scripts/xianyu-service.sh logs` 查看 `logs/live.log` 和 `logs/web.log`。
 
 如果之前已经从 worktree 手动启动过 `xianyu-seller-agent-live` 或 `xianyu-seller-agent-web`，先在主仓库执行：
 
@@ -117,6 +119,10 @@ python main.py
 ```
 
 `restart` 会停止同名旧 `screen` 会话，再从当前脚本所在的稳定项目根目录重新启动，避免运行目录继续依赖 `/Volumes/SamsungDisk/Code/.worktrees/...`。
+
+删除任何临时 worktree 前，先在主仓库执行 `./scripts/xianyu-service.sh doctor`。如果仍有 `pid ... cwd is outside PROJECT_ROOT` 警告，先停止或迁移对应进程，再清理 worktree。
+
+后续新建开发 worktree 时，统一放在项目内 `.worktrees/<short-slug>`，例如 `/Volumes/SamsungDisk/Code/xianyu-seller-agent/.worktrees/runtime-doctor`。不要再把本项目的新 worktree 放到 `/Volumes/SamsungDisk/Code/.worktrees` 这种跨项目外层目录；历史计划中出现的外层 worktree 路径只作为过期记录保留。
 
 可选覆盖项：
 
@@ -186,7 +192,7 @@ Playwright 路径会参考 `xianyu-auto-reply` 的页面初始化策略：先访
 
 ## 配置与默认关闭项
 
-复制 `.env.example` 为 `.env` 后再填入真实配置。`.env`、Cookie、SQLite 运行库、买家信息、发货库存和真实重新上架任务都不应提交。
+复制 `.env.example` 为主仓库根目录的 `.env` 后再填入真实配置。`.env`、Cookie、SQLite 运行库、买家信息、发货库存和真实重新上架任务都不应提交。临时 worktree 只用于开发、测试和 PR，不保存长期运行 `.env` 或承载常驻 live/web 服务。
 
 关键开关：
 

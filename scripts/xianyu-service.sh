@@ -28,6 +28,7 @@ Commands:
   stop-web     Stop only the local web dashboard
   restart      Stop both processes, then start both processes
   status       Print session, root, venv, and log status
+  doctor       Check runtime processes, cwd, .env, and web port health
   logs         Tail both live and web logs
 
 Environment overrides:
@@ -86,7 +87,7 @@ require_env_for_live() {
 
 session_exists() {
   local session="$1"
-  screen -ls 2>/dev/null | grep -Eq "[0-9]+\\.${session}[[:space:]]"
+  { screen -ls 2>/dev/null || true; } | grep -Eq "[0-9]+\\.${session}[[:space:]]"
 }
 
 start_session() {
@@ -165,6 +166,91 @@ status() {
   return 0
 }
 
+process_cwd() {
+  local pid="$1"
+  { lsof -a -p "$pid" -d cwd -Fn 2>/dev/null || true; } | sed -n 's/^n//p' | head -n 1
+}
+
+cwd_is_stable_project_root() {
+  local cwd="$1"
+  [[ "$cwd" == "$PROJECT_ROOT" ]]
+}
+
+env_file_value() {
+  local key="$1"
+  [[ -f "$PROJECT_ROOT/.env" ]] || return 0
+  local line value
+  line="$(grep -E "^[[:space:]]*${key}=" "$PROJECT_ROOT/.env" 2>/dev/null | tail -n 1 || true)"
+  [[ -n "$line" ]] || return 0
+  value="${line#*=}"
+  value="${value%%#*}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  value="${value%$'\r'}"
+  value="${value%\"}"
+  value="${value#\"}"
+  value="${value%\'}"
+  value="${value#\'}"
+  printf '%s\n' "$value"
+}
+
+configured_web_port() {
+  if [[ -n "${WEB_PORT:-}" ]]; then
+    printf '%s\n' "$WEB_PORT"
+    return
+  fi
+  local port
+  port="$(env_file_value WEB_PORT)"
+  if [[ -n "$port" ]]; then
+    printf '%s\n' "$port"
+  else
+    printf '8765\n'
+  fi
+}
+
+print_runtime_processes() {
+  local found=0
+  while read -r pid command_line; do
+    [[ -n "${pid:-}" ]] || continue
+    [[ "$command_line" == *"main.py"* ]] || continue
+    found=1
+    local cwd
+    cwd="$(process_cwd "$pid")"
+    if [[ -n "$cwd" ]]; then
+      echo "pid $pid cwd: $cwd"
+      if ! cwd_is_stable_project_root "$cwd"; then
+        echo "warning: pid $pid cwd is not stable PROJECT_ROOT: $cwd"
+      fi
+    else
+      echo "pid $pid cwd: unknown"
+    fi
+    echo "pid $pid command: $command_line"
+  done < <(ps -axo pid=,command= 2>/dev/null || true)
+
+  if [[ "$found" == "0" ]]; then
+    echo "runtime_processes: none"
+  fi
+}
+
+print_web_port_status() {
+  local port
+  local pids
+  port="$(configured_web_port)"
+  pids="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null || true)"
+  if [[ -n "$pids" ]]; then
+    echo "web_port_$port: listening pid(s): ${pids//$'\n'/ }"
+  else
+    echo "web_port_$port: not listening"
+  fi
+}
+
+doctor() {
+  status
+  echo "doctor: checking runtime process cwd and web port"
+  print_runtime_processes
+  print_web_port_status
+}
+
 tail_logs() {
   local lines="${LINES:-120}"
   echo "== live: $LIVE_LOG =="
@@ -227,6 +313,9 @@ case "$command" in
     ;;
   status)
     status
+    ;;
+  doctor)
+    doctor
     ;;
   logs)
     tail_logs

@@ -31,11 +31,13 @@ python main.py
 
 历史提交使用 Conventional Commit，例如 `docs: initialize xianyu seller agent`。继续使用 `docs:`、`feat:`、`fix:`、`test:`、`refactor:`。PR 必须说明参考了哪个源项目文件、做了哪些裁剪、运行了哪些验证，以及是否涉及 `.env`、Cookie、发货或发布风险。
 
-每个需求都必须从最新 `origin/main` 新开独立 git worktree 和 `codex/` 前缀分支执行，不要直接在主工作区或 `main` 上改需求。推荐 worktree 位置为 `/Volumes/SamsungDisk/Code/.worktrees/xianyu-seller-agent-<short-slug>`。完成后必须 push 分支并新建 PR；PR 合并后再快进本地主工作区并清理对应 worktree、本地分支和远端分支。
+每个需求都必须从最新 `origin/main` 新开独立 git worktree 和 `codex/` 前缀分支执行，不要直接在主工作区或 `main` 上改需求。推荐 worktree 位置为项目内 `.worktrees/<short-slug>`，例如 `/Volumes/SamsungDisk/Code/xianyu-seller-agent/.worktrees/runtime-doctor`；`.worktrees/` 必须保持在 `.gitignore` 中。完成后必须 push 分支并新建 PR；PR 合并后再快进本地主工作区并清理对应 worktree、本地分支和远端分支。
 
 ## 安全与配置
 
 禁止提交 `.env`、Cookie、API Key、SQLite 运行库、买家信息和发货库存。自动发货、自动确认和自动重新上架默认关闭。遇到风控、滑块验证或 Cookie 失效时，记录原因并要求人工处理，不要实现绕过逻辑。
+
+项目私有 `.env` 只放主 checkout 根目录，例如 `/Volumes/SamsungDisk/Code/xianyu-seller-agent/.env`，不要放全局上层目录，也不要放临时 worktree。临时 worktree 只用于开发、测试和 PR，不作为长期 live/web 服务运行目录；删除 worktree 前必须确认没有 `python main.py`、`python main.py web`、`screen` 会话或打开的 SQLite/日志仍指向该 worktree。长期运行统一从主 checkout 使用 `scripts/xianyu-service.sh`，必要时先跑 `scripts/xianyu-service.sh doctor` 检查进程 cwd 和端口占用。
 
 ## 账号与平台约束
 
