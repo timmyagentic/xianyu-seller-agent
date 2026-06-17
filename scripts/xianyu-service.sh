@@ -129,13 +129,73 @@ start_web() {
 
 stop_session() {
   local session="$1"
+  local runtime_kind="${2:-}"
   ensure_screen
   if ! session_exists "$session"; then
     echo "$session not running"
+    if [[ -n "$runtime_kind" ]]; then
+      terminate_runtime_processes "$runtime_kind"
+    fi
     return
   fi
   screen -S "$session" -X quit
   echo "stopped $session"
+  if [[ -n "$runtime_kind" ]]; then
+    terminate_runtime_processes "$runtime_kind"
+  fi
+}
+
+runtime_process_matches() {
+  local runtime_kind="$1"
+  local command_line="$2"
+  local cwd="$3"
+
+  [[ "$command_line" == *"main.py"* ]] || return 1
+  case "$runtime_kind" in
+    live)
+      [[ "$command_line" != *"main.py web"* ]] || return 1
+      ;;
+    web)
+      [[ "$command_line" == *"main.py web"* ]] || return 1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  [[ "$cwd" == "$PROJECT_ROOT" || "$command_line" == *"$PROJECT_ROOT"* ]]
+}
+
+terminate_runtime_processes() {
+  local runtime_kind="$1"
+  local pids=()
+  local pid command_line cwd
+
+  while read -r pid command_line; do
+    [[ -n "${pid:-}" ]] || continue
+    [[ "$pid" != "$$" ]] || continue
+    cwd="$(process_cwd "$pid")"
+    if runtime_process_matches "$runtime_kind" "$command_line" "$cwd"; then
+      pids+=("$pid")
+    fi
+  done < <(ps -axo pid=,command= 2>/dev/null || true)
+
+  if [[ "${#pids[@]}" == "0" ]]; then
+    return
+  fi
+
+  for pid in "${pids[@]}"; do
+    kill "$pid" 2>/dev/null || true
+    echo "terminated stale $runtime_kind process pid $pid"
+  done
+
+  sleep 1
+  for pid in "${pids[@]}"; do
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -9 "$pid" 2>/dev/null || true
+      echo "force-killed stale $runtime_kind process pid $pid"
+    fi
+  done
 }
 
 print_session_status() {
@@ -296,18 +356,18 @@ case "$command" in
     start_web
     ;;
   stop)
-    stop_session "$LIVE_SESSION"
-    stop_session "$WEB_SESSION"
+    stop_session "$LIVE_SESSION" live
+    stop_session "$WEB_SESSION" web
     ;;
   stop-live)
-    stop_session "$LIVE_SESSION"
+    stop_session "$LIVE_SESSION" live
     ;;
   stop-web)
-    stop_session "$WEB_SESSION"
+    stop_session "$WEB_SESSION" web
     ;;
   restart)
-    stop_session "$LIVE_SESSION"
-    stop_session "$WEB_SESSION"
+    stop_session "$LIVE_SESSION" live
+    stop_session "$WEB_SESSION" web
     start_live
     start_web
     ;;
