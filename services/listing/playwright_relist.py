@@ -14,6 +14,7 @@ from .models import RelistApiResult, RelistRequest
 SELLER_HOME_URL = "https://www.goofish.com"
 LOGIN_CONTEXT_URL = "https://login.taobao.com/member/login.jhtml"
 SELLER_MANAGEMENT_URL = "https://www.goofish.com/publish?itemId={item_id}&editScene=rePutOn"
+SELLER_PUBLISH_RELIST_URL = "https://seller.goofish.com/?site=COMMONPRO#/seller-item/publish?itemId={item_id}&editScene=rePutOn"
 COOKIE_DOMAINS = (".goofish.com", ".taobao.com", ".alipay.com")
 RISK_CONTROL_SELECTORS = (".nc-container", "#nc_1_n1z", ".captcha-container", ".nc_scale")
 RISK_CONTROL_KEYWORDS = (
@@ -70,6 +71,13 @@ CONFIRM_BUTTON_SELECTORS = (
     '[role="button"]:has-text("确定")',
     '[role="button"]:has-text("确认")',
 )
+SELLER_OVERLAY_DISMISS_SELECTORS = (
+    ".ant-modal-close",
+    '[aria-label="Close"]',
+    'text="近30天不再显示"',
+    'button:has-text("我知道了")',
+    'button:has-text("知道了")',
+)
 
 
 @dataclass(frozen=True)
@@ -86,15 +94,21 @@ def build_playwright_relist_command(
     item_id: str,
     expected_title: str = "",
     target_stock: int | None = None,
-    management_url: str = SELLER_MANAGEMENT_URL,
+    management_url: str | None = None,
 ) -> PlaywrightRelistCommand:
     return PlaywrightRelistCommand(
         item_id=str(item_id),
         expected_title=str(expected_title or ""),
         target_stock=target_stock,
-        management_url=management_url,
+        management_url=management_url or default_relist_management_url(target_stock),
         cookie_domains=COOKIE_DOMAINS,
     )
+
+
+def default_relist_management_url(target_stock: int | None = None) -> str:
+    if target_stock is not None:
+        return SELLER_PUBLISH_RELIST_URL
+    return SELLER_MANAGEMENT_URL
 
 
 class PlaywrightRelistExecutor:
@@ -386,6 +400,7 @@ class PlaywrightRelistExecutor:
         except Exception:
             pass
         await self._wait(page, 3000)
+        await self._dismiss_seller_overlays(page)
         await self._wait_for_publish_form(page)
 
     def _relist_url(self, request: RelistRequest) -> str:
@@ -427,6 +442,12 @@ class PlaywrightRelistExecutor:
             except Exception:
                 pass
         await stock_input.fill(str(target_stock))
+        try:
+            value = await stock_input.input_value()
+        except Exception:
+            value = str(target_stock)
+        if str(value) != str(target_stock):
+            return False
         return True
 
     async def _find_stock_input(self, page):
@@ -481,7 +502,23 @@ class PlaywrightRelistExecutor:
 
     def _is_reputon_publish_route(self, page) -> bool:
         page_url = str(getattr(page, "url", "") or "").lower()
-        return "www.goofish.com/publish" in page_url and "editscene=reputon" in page_url
+        if "editscene=reputon" not in page_url:
+            return False
+        if "www.goofish.com/publish" in page_url:
+            return True
+        return "seller.goofish.com" in page_url and "seller-item/publish" in page_url and "itemid=" in page_url
+
+    async def _dismiss_seller_overlays(self, page) -> None:
+        for selector in SELLER_OVERLAY_DISMISS_SELECTORS:
+            element = await self._query_selector(page, selector)
+            if not element:
+                continue
+            if await self._element_visible(element) and await self._element_enabled(element):
+                try:
+                    await element.click()
+                    await self._wait(page, 500)
+                except Exception:
+                    pass
 
     async def _click_optional_confirm(self, page) -> None:
         for selector in CONFIRM_BUTTON_SELECTORS:
@@ -568,10 +605,17 @@ class PlaywrightRelistExecutor:
             return 0
 
     def _is_relist_success(self, current_url: str, page_text: str, request: RelistRequest) -> bool:
-        if request.item_id and (
-            f"/item/{request.item_id}" in current_url or f"id={request.item_id}" in current_url
-        ):
-            return True
+        lower_url = current_url.lower()
+        if request.item_id:
+            item_id = request.item_id.lower()
+            if f"/item/{item_id}" in lower_url:
+                return True
+            if "goofish.com/item" in lower_url and f"id={item_id}" in lower_url:
+                return True
+            if "/publish/success" in lower_url and (
+                f"itemid={item_id}" in lower_url or f"id={item_id}" in lower_url
+            ):
+                return True
         return any(keyword in page_text for keyword in SUCCESS_KEYWORDS)
 
     async def _wait_for_publish_form(self, page) -> None:

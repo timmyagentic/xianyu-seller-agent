@@ -23,7 +23,7 @@ from services.delivery.store import DeliveryStore
 from services.listing.fetch_items import sync_published_items
 from services.listing.models import PublishRequest
 from services.listing.playwright_publish import PlaywrightPublishExecutor
-from services.listing.playwright_relist import PlaywrightRelistExecutor
+from services.listing.playwright_relist import PlaywrightRelistExecutor, default_relist_management_url
 from services.listing.relist import RelistService, load_relist_request
 from services.listing.store import ListingStore
 from services.messages import MessageDeduplicator, MessageParser
@@ -793,6 +793,7 @@ class XianyuLive:
         relist_executor = _build_playwright_relist_executor(
             cookies_str=cookie_string,
             allow_playwright=allow_playwright and confirm_playwright,
+            target_stock=config.target_stock,
         )
         playwright_required_reason = "auto_relist_confirmation_required" if allow_playwright and not confirm_playwright else ""
         service = RelistService(
@@ -1096,20 +1097,17 @@ def _build_xianyu_api_from_env():
     return api
 
 
-def _build_playwright_relist_executor(*, cookies_str: str, allow_playwright: bool):
+def _build_playwright_relist_executor(*, cookies_str: str, allow_playwright: bool, target_stock: int | None = None):
     if not allow_playwright or not cookies_str:
         return None
     screenshot_dir = os.getenv("AUTO_RELIST_SCREENSHOT_DIR", "data/relist-screenshots")
     headless = os.getenv("AUTO_RELIST_PLAYWRIGHT_HEADLESS", os.getenv("PLAYWRIGHT_HEADLESS", "true")).lower() != "false"
     management_url = os.getenv("AUTO_RELIST_MANAGEMENT_URL", "").strip()
-    kwargs = {}
-    if management_url:
-        kwargs["management_url"] = management_url
     return PlaywrightRelistExecutor(
         cookies_str=cookies_str,
         headless=headless,
         screenshot_dir=screenshot_dir,
-        **kwargs,
+        management_url=management_url or default_relist_management_url(target_stock),
     )
 
 
@@ -1371,6 +1369,7 @@ def run_cli(argv=None):
             relist_executor = _build_playwright_relist_executor(
                 cookies_str=os.getenv("COOKIES_STR", ""),
                 allow_playwright=args.allow_playwright and confirm_real_relist,
+                target_stock=request.target_stock,
             )
             playwright_required_reason = (
                 "real_relist_confirmation_required"
@@ -1552,6 +1551,7 @@ def run_cli(argv=None):
             executor = _build_playwright_relist_executor(
                 cookies_str=cookies_str,
                 allow_playwright=True,
+                target_stock=args.target_stock,
             )
             request = load_relist_request(
                 {

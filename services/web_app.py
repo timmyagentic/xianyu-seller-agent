@@ -10,7 +10,7 @@ from XianyuApis import XianyuApis
 from services.delivery.store import DeliveryStore
 from services.listing.models import PublishRequest
 from services.listing.playwright_publish import PlaywrightPublishExecutor
-from services.listing.playwright_relist import PlaywrightRelistExecutor
+from services.listing.playwright_relist import PlaywrightRelistExecutor, default_relist_management_url
 from services.listing.relist import RelistService, load_relist_request
 from services.listing.store import ListingStore
 from utils.xianyu_utils import trans_cookies
@@ -217,7 +217,10 @@ def run_relist(db_path: str, data: dict) -> dict:
     )
     allow_playwright = bool(data.get("allow_playwright"))
     confirm_real_relist = bool(data.get("confirm_real_relist"))
-    executor = _build_relist_executor(allow_playwright=allow_playwright and confirm_real_relist)
+    executor = _build_relist_executor(
+        allow_playwright=allow_playwright and confirm_real_relist,
+        target_stock=request.target_stock,
+    )
     api_client = _build_api_from_env()
     service = RelistService(
         listing_store=ListingStore(db_path=db_path),
@@ -285,14 +288,16 @@ def _build_api_from_env():
     return api
 
 
-def _build_relist_executor(*, allow_playwright: bool):
+def _build_relist_executor(*, allow_playwright: bool, target_stock: int | None = None):
     cookies_str = os.getenv("COOKIES_STR", "")
     if not allow_playwright or not cookies_str:
         return None
+    management_url = os.getenv("AUTO_RELIST_MANAGEMENT_URL", "").strip()
     return PlaywrightRelistExecutor(
         cookies_str=cookies_str,
         headless=_env_bool("AUTO_RELIST_PLAYWRIGHT_HEADLESS", _env_bool("PLAYWRIGHT_HEADLESS", True)),
         screenshot_dir=os.getenv("AUTO_RELIST_SCREENSHOT_DIR", "data/relist-screenshots"),
+        management_url=management_url or default_relist_management_url(target_stock),
     )
 
 
