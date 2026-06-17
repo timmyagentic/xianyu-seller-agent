@@ -83,6 +83,50 @@ python main.py
 
 在尚未创建虚拟环境时，也可以用 `uv run --with pytest python -m pytest -q` 临时运行测试；真实运行仍应使用 `.venv` 和 `requirements.txt`。
 
+## 稳定服务启动
+
+本项目有两个常驻服务面：
+
+- `live`：`python main.py`，负责闲鱼 WebSocket、自动回复、付款消息自动发货、确认发货和发货后重新上架 hook。
+- `web`：`python main.py web`，负责本地管理页面和本地 API。
+
+不要再手动进入某个临时 worktree 后用 `screen` 拼命令启动。仓库提供统一脚本，脚本会从自身位置解析稳定项目根目录，自动使用该根目录下的 `.venv`、`.env`、`data/` 和 `logs/`：
+
+```bash
+./scripts/xianyu-service.sh setup
+./scripts/xianyu-service.sh qr-login
+./scripts/xianyu-service.sh start
+./scripts/xianyu-service.sh status
+./scripts/xianyu-service.sh logs
+./scripts/xianyu-service.sh restart
+./scripts/xianyu-service.sh stop
+```
+
+常用流程：
+
+1. 在主仓库 `/Volumes/SamsungDisk/Code/xianyu-seller-agent` 执行 `./scripts/xianyu-service.sh setup` 创建或修复 `.venv`。
+2. 如果 `.env` 里没有有效 `COOKIES_STR`，执行 `./scripts/xianyu-service.sh qr-login` 扫码登录。
+3. 执行 `./scripts/xianyu-service.sh start` 同时启动 live 和 web。
+4. 执行 `./scripts/xianyu-service.sh status` 查看两个 `screen` 会话是否在跑。
+5. 执行 `./scripts/xianyu-service.sh logs` 查看 `logs/live.log` 和 `logs/web.log`。
+
+如果之前已经从 worktree 手动启动过 `xianyu-seller-agent-live` 或 `xianyu-seller-agent-web`，先在主仓库执行：
+
+```bash
+./scripts/xianyu-service.sh restart
+```
+
+`restart` 会停止同名旧 `screen` 会话，再从当前脚本所在的稳定项目根目录重新启动，避免运行目录继续依赖 `/Volumes/SamsungDisk/Code/.worktrees/...`。
+
+可选覆盖项：
+
+```bash
+XIANYU_AGENT_ROOT=/Volumes/SamsungDisk/Code/xianyu-seller-agent ./scripts/xianyu-service.sh start
+XIANYU_AGENT_LOG_DIR=/tmp/xianyu-logs ./scripts/xianyu-service.sh logs
+XIANYU_WEB_LOG_LEVEL=DEBUG ./scripts/xianyu-service.sh restart
+LINES=200 ./scripts/xianyu-service.sh logs
+```
+
 `python main.py` 等价于启动自动回复；帮助和本地配置命令不会要求 Cookie：
 
 ```bash
