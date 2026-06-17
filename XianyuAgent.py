@@ -10,6 +10,23 @@ from services.messages.knowledge import ItemKnowledgeBase, UnknownQuestionLog, l
 DEFAULT_MODEL_BASE_URL = "https://api-inference.modelscope.cn/v1"
 DEFAULT_MODEL_NAME = "deepseek-ai/DeepSeek-V4-Pro"
 FALLBACK_REPLY = "这个我确认一下，稍后回复你"
+NO_BARGAIN_REPLY = "这个价格不议，当前标价就是最终价格。如能接受，可以直接拍。"
+NO_BARGAIN_DISABLED_VALUES = {"0", "false", "no", "off"}
+NO_BARGAIN_REQUEST_KEYWORDS = (
+    "便宜",
+    "砍价",
+    "少点",
+    "少一点",
+    "优惠",
+    "折扣",
+    "打折",
+    "预算",
+    "刀",
+    "包邮",
+    "最低",
+    "低点",
+    "让一点",
+)
 FACT_CONSTRAINT_PROMPT = """【事实约束】
 1. 只能依据【商品信息】和【你与客户对话历史】回答库存、优惠、折扣、赠品、自动发货、售后承诺。
 2. 商品信息里的库存为 null、unknown 或缺失时，只表示未知，绝不能据此回复没货、缺货、补货。
@@ -126,6 +143,13 @@ class XianyuReplyBot:
             agent = self.agents[detected_intent]
             logger.info(f'意图识别完成: {detected_intent}')
             self.last_intent = detected_intent  # 保存当前意图
+            no_bargain_enabled = (
+                os.getenv("NO_BARGAIN_MODE", "true").lower()
+                not in NO_BARGAIN_DISABLED_VALUES
+            )
+            if detected_intent == "price" and no_bargain_enabled and self._is_bargain_request(user_msg):
+                logger.info("不砍价模式已开启，直接拒绝降价")
+                return self._safe_filter(NO_BARGAIN_REPLY)
         else:
             agent = self.agents['default']
             logger.info(f'意图识别完成: default')
@@ -199,6 +223,10 @@ class XianyuReplyBot:
             )
         except Exception as exc:
             logger.warning(f"记录未知问题失败: item_id={item_id}, error={exc}")
+
+    def _is_bargain_request(self, user_msg: str) -> bool:
+        text_clean = re.sub(r'[^\w\u4e00-\u9fa5]', '', user_msg or '')
+        return any(keyword in text_clean for keyword in NO_BARGAIN_REQUEST_KEYWORDS)
     
     def _extract_bargain_count(self, context: List[Dict]) -> int:
         """
@@ -242,7 +270,10 @@ class IntentRouter:
                 ]
             },
             'price': {
-                'keywords': ['便宜', '价', '砍价', '少点'],
+                'keywords': [
+                    '便宜', '价', '砍价', '少点', '少一点', '优惠', '折扣', '打折',
+                    '预算', '刀', '包邮', '最低', '低点', '让一点',
+                ],
                 'patterns': [r'\d+元', r'能少\d+']
             }
         }
