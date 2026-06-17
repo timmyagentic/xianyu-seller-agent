@@ -37,6 +37,8 @@ python main.py
 
 禁止提交 `.env`、Cookie、API Key、SQLite 运行库、买家信息和发货库存。自动发货、自动确认和自动重新上架默认关闭。遇到风控、滑块验证或 Cookie 失效时，记录原因并要求人工处理，不要实现绕过逻辑。
 
+项目私有 `.env` 只放主 checkout 根目录，例如 `/Volumes/SamsungDisk/Code/xianyu-seller-agent/.env`，不要放全局上层目录，也不要放临时 worktree。临时 worktree 只用于开发、测试和 PR，不作为长期 live/web 服务运行目录；删除 worktree 前必须确认没有 `python main.py`、`python main.py web`、`screen` 会话或打开的 SQLite/日志仍指向该 worktree。长期运行统一从主 checkout 使用 `scripts/xianyu-service.sh`，必要时先跑 `scripts/xianyu-service.sh doctor` 检查进程 cwd 和端口占用。
+
 ## 账号与平台约束
 
 当前绑定的闲鱼账号已经开通鱼小铺。发布、重新发布和多库存相关能力必须同时考虑普通闲鱼发布页和 seller 工作台：无库存要求的重新发布可使用 `https://www.goofish.com/publish?itemId=...&editScene=rePutOn`；涉及平台侧库存、鱼小铺商品管理和多库存验证时，优先使用 `https://seller.goofish.com/?site=COMMONPRO#/seller-item/goods-manage` 或 `#/seller-item/publish`。
