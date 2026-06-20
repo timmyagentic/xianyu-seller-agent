@@ -1,4 +1,4 @@
-from XianyuAgent import BaseAgent, IntentRouter, PriceAgent, TechAgent, XianyuReplyBot
+from XianyuAgent import DEFAULT_MODEL_NAMES, BaseAgent, IntentRouter, PriceAgent, TechAgent, XianyuReplyBot
 
 
 class FakeClassifyAgent:
@@ -79,6 +79,40 @@ class FakeClient:
         self.chat.completions = self.completions
 
 
+class FakeFallbackCompletions:
+    def __init__(self, *, failing_models):
+        self.failing_models = set(failing_models)
+        self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        model = kwargs.get("model", "")
+        if model in self.failing_models:
+            raise RuntimeError(f"{model} unavailable")
+
+        class FakeMessage:
+            content = f"{model} 回复"
+
+        class FakeChoice:
+            message = FakeMessage()
+
+        class FakeResponse:
+            choices = [FakeChoice()]
+
+        return FakeResponse()
+
+
+class FakeFallbackClient:
+    def __init__(self, *, failing_models):
+        self.completions = FakeFallbackCompletions(failing_models=failing_models)
+
+        class Chat:
+            pass
+
+        self.chat = Chat()
+        self.chat.completions = self.completions
+
+
 class FakeNoChoicesCompletions:
     def __init__(self):
         self.calls = []
@@ -118,7 +152,7 @@ def test_base_agent_uses_modelscope_default_model(monkeypatch):
     agent = BaseAgent(client, "系统提示", lambda text: text)
 
     assert agent.generate("你好", "商品信息", "") == "模型回复"
-    assert client.completions.calls[0]["model"] == "deepseek-ai/DeepSeek-V4-Pro"
+    assert client.completions.calls[0]["model"] == DEFAULT_MODEL_NAMES[0]
 
 
 def test_base_agent_adds_fact_constraints_to_prompt():
@@ -143,6 +177,15 @@ def test_base_agent_allows_model_name_override(monkeypatch):
     assert client.completions.calls[0]["model"] == "custom/model"
 
 
+def test_base_agent_falls_back_across_ordered_model_list(monkeypatch):
+    monkeypatch.setenv("MODEL_NAME", "bad/model, good/model, backup/model")
+    client = FakeFallbackClient(failing_models={"bad/model"})
+    agent = BaseAgent(client, "系统提示", lambda text: text)
+
+    assert agent.generate("你好", "商品信息", "") == "good/model 回复"
+    assert [call["model"] for call in client.completions.calls] == ["bad/model", "good/model"]
+
+
 def test_price_agent_uses_modelscope_default_model(monkeypatch):
     monkeypatch.delenv("MODEL_NAME", raising=False)
     client = FakeClient()
@@ -150,7 +193,7 @@ def test_price_agent_uses_modelscope_default_model(monkeypatch):
 
     agent.generate("便宜点", "商品信息", "", bargain_count=2)
 
-    assert client.completions.calls[0]["model"] == "deepseek-ai/DeepSeek-V4-Pro"
+    assert client.completions.calls[0]["model"] == DEFAULT_MODEL_NAMES[0]
 
 
 def test_tech_agent_omits_search_extension_by_default(monkeypatch):
@@ -161,8 +204,20 @@ def test_tech_agent_omits_search_extension_by_default(monkeypatch):
 
     agent.generate("参数怎么样", "商品信息", "")
 
-    assert client.completions.calls[0]["model"] == "deepseek-ai/DeepSeek-V4-Pro"
+    assert client.completions.calls[0]["model"] == DEFAULT_MODEL_NAMES[0]
     assert "extra_body" not in client.completions.calls[0]
+
+
+def test_tech_agent_falls_back_and_preserves_search_extension(monkeypatch):
+    monkeypatch.setenv("MODEL_NAME", "bad/model, good/model")
+    monkeypatch.setenv("LLM_ENABLE_SEARCH", "true")
+    client = FakeFallbackClient(failing_models={"bad/model"})
+    agent = TechAgent(client, "系统提示", lambda text: text)
+
+    assert agent.generate("参数怎么样", "商品信息", "") == "good/model 回复"
+    assert [call["model"] for call in client.completions.calls] == ["bad/model", "good/model"]
+    assert client.completions.calls[0]["extra_body"] == {"enable_search": True}
+    assert client.completions.calls[1]["extra_body"] == {"enable_search": True}
 
 
 def test_intent_router_detects_price_without_llm():

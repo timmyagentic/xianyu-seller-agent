@@ -196,7 +196,7 @@ Playwright 路径会参考 `xianyu-auto-reply` 的页面初始化策略：先访
 
 关键开关：
 
-- `MODEL_BASE_URL=https://api-inference.modelscope.cn/v1` 与 `MODEL_NAME=deepseek-ai/DeepSeek-V4-Pro`：默认使用 ModelScope 的 OpenAI 兼容接口；真实 `API_KEY` 只写入本地 `.env`。
+- `MODEL_BASE_URL=https://api-inference.modelscope.cn/v1` 与 `MODEL_NAME=ZhipuAI/GLM-5.2,Qwen/Qwen3.5-397B-A17B,deepseek-ai/DeepSeek-V4-Flash,MiniMax/MiniMax-M3,XiaomiMiMo/MiMo-V2-Flash`：默认使用 ModelScope 的 OpenAI 兼容接口；`MODEL_NAME` 支持逗号分隔的有序 fallback，前一个模型调用失败或返回空内容时会按顺序尝试下一个模型；真实 `API_KEY` 只写入本地 `.env`。
 - `LLM_ENABLE_SEARCH=false`：默认不发送供应商特定的联网搜索扩展参数。
 - `COOKIE_REFRESH_ENABLED=true`：默认每 10 分钟调用登录态续期接口合并 Set-Cookie，减少 `_m_h5_tk` 令牌过期导致的掉线；Session 过期、滑块或风控仍需人工重新登录。
 - `AUTO_REPLY_ENABLED=true`：控制普通买家聊天是否进入 LLM 自动回复；这是全局总闸，实际只会回复本地已配置自动化的商品。付款完成消息仍由 `AUTO_DELIVERY_ENABLED` 单独控制。
