@@ -39,6 +39,9 @@ from services.messages.facts import (
     reply_claims_unavailable,
     stock_state,
 )
+from services.review.models import ReviewSubmissionRequest
+from services.review.playwright_review import PlaywrightReviewExecutor
+from services.review.store import ReviewStore
 from services.web_app import run_web_server
 from xianyu_qr_login import QRLoginError, run_qr_login_cli
 
@@ -95,6 +98,7 @@ class XianyuLive:
         db_path = os.getenv("DB_PATH", "data/chat_history.db")
         self.delivery_store = DeliveryStore(db_path=db_path)
         self.listing_store = ListingStore(db_path=db_path)
+        self.review_store = ReviewStore(db_path=db_path)
         self.delivery_service = DeliveryService(
             store=self.delivery_store,
             send_message=self.send_delivery_message,
@@ -140,6 +144,16 @@ class XianyuLive:
             return store.get_enabled_auto_relist_config(str(item_id)) is not None
         except Exception as exc:
             logger.error(f"检查商品自动上架配置失败: item_id={item_id}, error={exc}")
+            return False
+
+    def has_enabled_review_config(self, item_id: str) -> bool:
+        store = getattr(self, "review_store", None)
+        if store is None:
+            return False
+        try:
+            return store.get_enabled_config(str(item_id)) is not None
+        except Exception as exc:
+            logger.error(f"检查商品评价配置失败: item_id={item_id}, error={exc}")
             return False
 
     def is_item_configured_for_automation(self, item_id: str) -> bool:
@@ -605,6 +619,10 @@ class XianyuLive:
             await self.handle_paid_order_message(incoming, websocket)
             return
 
+        if incoming.kind == "reviewable_order":
+            await self.handle_reviewable_order_message(incoming, websocket)
+            return
+
         if incoming.kind != "chat":
             logger.debug(f"非聊天消息，暂不触发自动回复: {incoming.kind}")
             return
@@ -770,6 +788,29 @@ class XianyuLive:
         if result.status in {"sent", "already_sent", "sent_confirm_failed", "already_sent_confirm_failed"}:
             await self.mark_message_read(websocket, incoming.chat_id, incoming.message_id)
         return result
+
+    async def handle_reviewable_order_message(self, incoming, websocket):
+        if not incoming.order_id:
+            logger.warning("评价消息缺少订单号，跳过入队")
+            return None
+        if not incoming.item_id:
+            logger.warning(f"订单 {incoming.order_id} 缺少商品ID，跳过评价入队")
+            return None
+        if not incoming.chat_id or not incoming.sender_id:
+            logger.warning(f"订单 {incoming.order_id} 缺少会话或买家ID，跳过评价入队")
+            return None
+
+        task = self.review_store.enqueue_from_message(incoming)
+        logger.info(
+            "评价任务入队结果: 订单={}, 商品={}, 会话={}, 状态={}, 原因={}",
+            task.order_id,
+            task.item_id,
+            task.chat_id,
+            task.status,
+            task.failed_reason,
+        )
+        await self.mark_message_read(websocket, incoming.chat_id, incoming.message_id)
+        return task
 
     async def handle_post_delivery_relist(self, order: OrderInfo, result):
         if getattr(result, "status", "") != "sent":
@@ -1128,6 +1169,18 @@ def _build_playwright_publish_executor(*, cookies_str: str, allow_playwright: bo
     )
 
 
+def _build_playwright_review_executor(*, cookies_str: str):
+    screenshot_dir = os.getenv("AUTO_REVIEW_SCREENSHOT_DIR", "data/review-screenshots")
+    headless = os.getenv("AUTO_REVIEW_PLAYWRIGHT_HEADLESS", os.getenv("PLAYWRIGHT_HEADLESS", "true")).lower() != "false"
+    order_url_template = os.getenv("AUTO_REVIEW_ORDER_URL_TEMPLATE", "").strip()
+    return PlaywrightReviewExecutor(
+        cookies_str=cookies_str,
+        headless=headless,
+        screenshot_dir=screenshot_dir,
+        order_url_template=order_url_template,
+    )
+
+
 def _public_item_status_payload(item: dict) -> dict:
     keys = (
         "item_id",
@@ -1273,6 +1326,45 @@ def build_cli_parser():
     item_status_parser.add_argument("--max-pages", type=int)
     item_status_parser.add_argument("--myid")
 
+    review_parser = subparsers.add_parser("review", help="管理成交后评价队列")
+    review_parser.add_argument("--db-path", default=os.getenv("DB_PATH", "data/chat_history.db"))
+    review_subparsers = review_parser.add_subparsers(dest="review_command", required=True)
+
+    review_config_parser = review_subparsers.add_parser("config", help="管理商品级固定评价文案")
+    review_config_subparsers = review_config_parser.add_subparsers(dest="review_config_command", required=True)
+
+    review_config_suggest_parser = review_config_subparsers.add_parser("suggest", help="生成固定五星正向评价候选文案")
+    review_config_suggest_parser.add_argument("--item-id", required=True)
+
+    review_config_set_parser = review_config_subparsers.add_parser("set", help="设置商品级固定评价文案")
+    review_config_set_parser.add_argument("--item-id", required=True)
+    review_config_set_parser.add_argument("--content", required=True)
+    review_config_set_parser.add_argument("--disabled", action="store_true")
+
+    review_config_list_parser = review_config_subparsers.add_parser("list", help="列出商品级固定评价文案")
+    review_config_list_parser.add_argument("--item-id")
+
+    review_queue_parser = review_subparsers.add_parser("queue", help="管理待确认评价任务")
+    review_queue_subparsers = review_queue_parser.add_subparsers(dest="review_queue_command", required=True)
+
+    review_queue_list_parser = review_queue_subparsers.add_parser("list", help="列出评价任务")
+    review_queue_list_parser.add_argument("--item-id")
+    review_queue_list_parser.add_argument("--status")
+    review_queue_list_parser.add_argument("--limit", type=int, default=20)
+
+    review_queue_set_url_parser = review_queue_subparsers.add_parser("set-url", help="给评价任务补充评价入口 URL")
+    review_queue_set_url_parser.add_argument("--task-id", type=int, required=True)
+    review_queue_set_url_parser.add_argument("--review-url", required=True)
+
+    review_preflight_parser = review_subparsers.add_parser("preflight", help="只读预检评价页面是否可提交")
+    review_preflight_parser.add_argument("--task-id", type=int, required=True)
+    review_preflight_parser.add_argument("--review-url")
+
+    review_submit_parser = review_subparsers.add_parser("submit", help="人工确认后提交单条评价")
+    review_submit_parser.add_argument("--task-id", type=int, required=True)
+    review_submit_parser.add_argument("--review-url")
+    review_submit_parser.add_argument("--confirm-real-review", action="store_true")
+
     return parser
 
 
@@ -1340,6 +1432,144 @@ def run_cli(argv=None):
                     payload.append(item)
                 print(json.dumps(payload, ensure_ascii=False, indent=2))
                 return 0
+
+    if args.command == "review":
+        review_store = ReviewStore(db_path=args.db_path)
+        if args.review_command == "config":
+            if args.review_config_command == "suggest":
+                payload = {
+                    "item_id": args.item_id,
+                    "content": "交易顺利，沟通友好，感谢支持。",
+                    "rating": 5,
+                    "message": "候选文案需人工确认后通过 review config set 写入配置",
+                }
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+                return 0
+
+            if args.review_config_command == "set":
+                try:
+                    config_id = review_store.upsert_config(
+                        item_id=args.item_id,
+                        content=args.content,
+                        enabled=not args.disabled,
+                    )
+                except ValueError as exc:
+                    parser.error(str(exc))
+                config = review_store.list_configs(item_id=args.item_id)[0]
+                payload = {
+                    "id": config_id,
+                    "item_id": config.item_id,
+                    "content": config.content,
+                    "rating": config.rating,
+                    "enabled": config.enabled,
+                }
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+                return 0
+
+            if args.review_config_command == "list":
+                configs = review_store.list_configs(item_id=args.item_id)
+                payload = [
+                    {
+                        "id": config.id,
+                        "item_id": config.item_id,
+                        "content": config.content,
+                        "rating": config.rating,
+                        "enabled": config.enabled,
+                    }
+                    for config in configs
+                ]
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+                return 0
+
+        if args.review_command == "queue":
+            if args.review_queue_command == "list":
+                if args.limit < 1:
+                    parser.error("review queue list --limit must be greater than 0")
+                tasks = review_store.list_tasks(status=args.status, item_id=args.item_id, limit=args.limit)
+                payload = [task.__dict__ for task in tasks]
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+                return 0
+
+            if args.review_queue_command == "set-url":
+                try:
+                    task = review_store.set_review_url(args.task_id, args.review_url)
+                except ValueError as exc:
+                    print(json.dumps({"success": False, "failed_reason": str(exc)}, ensure_ascii=False, indent=2))
+                    return 1
+                print(json.dumps(task.__dict__, ensure_ascii=False, indent=2))
+                return 0
+
+        if args.review_command == "preflight":
+            task = review_store.get_task(args.task_id)
+            if not task:
+                print(json.dumps({"success": False, "failed_reason": "review_task_not_found"}, ensure_ascii=False, indent=2))
+                return 1
+            if args.review_url:
+                task = review_store.set_review_url(args.task_id, args.review_url)
+            request = ReviewSubmissionRequest(
+                task_id=task.id,
+                order_id=task.order_id,
+                item_id=task.item_id,
+                review_url=task.review_url,
+                content=task.content,
+                rating=task.rating,
+            )
+            executor = _build_playwright_review_executor(cookies_str=os.getenv("COOKIES_STR", ""))
+            result = asyncio.run(executor.preflight(request))
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0 if result.get("success") else 1
+
+        if args.review_command == "submit":
+            task = review_store.get_task(args.task_id)
+            if not task:
+                print(json.dumps({"success": False, "failed_reason": "review_task_not_found"}, ensure_ascii=False, indent=2))
+                return 1
+            if args.review_url:
+                task = review_store.set_review_url(args.task_id, args.review_url)
+            if not args.confirm_real_review:
+                print(
+                    json.dumps(
+                        {
+                            "success": False,
+                            "failed_reason": "real_review_confirmation_required",
+                            "message": "review submit requires --confirm-real-review before opening browser",
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+                return 1
+            if task.status not in {"pending_confirmation", "failed_retryable"} or not task.content.strip():
+                print(
+                    json.dumps(
+                        {
+                            "success": False,
+                            "failed_reason": "review_task_not_ready",
+                            "message": "review task must be pending/failed_retryable and have configured content",
+                            "task": task.__dict__,
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+                return 1
+            request = ReviewSubmissionRequest(
+                task_id=task.id,
+                order_id=task.order_id,
+                item_id=task.item_id,
+                review_url=task.review_url,
+                content=task.content,
+                rating=task.rating,
+            )
+            executor = _build_playwright_review_executor(cookies_str=os.getenv("COOKIES_STR", ""))
+            result = asyncio.run(executor.submit(request))
+            updated_task = review_store.record_submission_result(task.id, result)
+            payload = {
+                **result.__dict__,
+                "task": updated_task.__dict__,
+            }
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            return 0 if result.success else 1
 
     if args.command == "listing":
         listing_store = ListingStore(db_path=args.db_path)
@@ -1659,7 +1889,7 @@ if __name__ == '__main__':
             logger.error(f"扫码登录失败: {e}")
             sys.exit(1)
 
-    if len(sys.argv) > 1 and sys.argv[1] in {"delivery", "listing", "web", "--help", "-h"}:
+    if len(sys.argv) > 1 and sys.argv[1] in {"delivery", "listing", "review", "web", "--help", "-h"}:
         sys.exit(run_cli(sys.argv[1:]))
     
     # 交互式检查并补全配置

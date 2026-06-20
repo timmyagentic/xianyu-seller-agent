@@ -188,6 +188,48 @@ def test_parser_does_not_treat_waiting_buyer_payment_as_paid_order():
     assert parser.parse_single_message(message) is None
 
 
+def test_parser_marks_completed_order_card_as_reviewable_order():
+    parser = MessageParser(myid="seller-1")
+    message = {
+        "1": "buyer-1@goofish",
+        "2": "chat-1@goofish",
+        "3": {
+            "redReminder": "交易成功，待评价",
+            "bizOrderId": "1234567890126",
+            "itemId": "item-4",
+        },
+        "5": int(time.time() * 1000),
+    }
+
+    incoming = parser.parse_single_message(message)
+
+    assert incoming.kind == "reviewable_order"
+    assert incoming.chat_id == "chat-1"
+    assert incoming.item_id == "item-4"
+    assert incoming.order_id == "1234567890126"
+    assert incoming.is_reviewable_order is True
+    assert incoming.is_paid_order is False
+
+
+def test_parser_does_not_mark_waiting_seller_ship_as_reviewable_order():
+    parser = MessageParser(myid="seller-1")
+    message = {
+        "1": "buyer-1@goofish",
+        "2": "chat-1@goofish",
+        "3": {
+            "redReminder": "等待卖家发货",
+            "bizOrderId": "1234567890127",
+            "itemId": "item-4",
+        },
+        "5": int(time.time() * 1000),
+    }
+
+    incoming = parser.parse_single_message(message)
+
+    assert incoming.kind == "paid_order"
+    assert incoming.is_reviewable_order is False
+
+
 def test_deduplicator_tracks_processed_message_ids():
     dedup = MessageDeduplicator(max_size=2)
 

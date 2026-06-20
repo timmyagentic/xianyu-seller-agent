@@ -16,3 +16,4 @@ class IncomingMessage:
     kind: str
     order_id: str = ""
     is_paid_order: bool = False
+    is_reviewable_order: bool = False

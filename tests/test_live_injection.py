@@ -9,6 +9,7 @@ from services.delivery.service import DeliveryService
 from services.delivery.store import DeliveryStore
 from services.messages import MessageDeduplicator, MessageParser
 from services.messages.models import IncomingMessage
+from services.review.store import ReviewStore
 
 
 def test_xianyu_live_accepts_reply_bot_injection():
@@ -228,6 +229,33 @@ def test_xianyu_live_allows_chat_reply_for_configured_item(tmp_path):
     assert len(live.reply_bot.calls) == 1
     assert live.reply_bot.calls[0]["item_id"] == "item-1"
     assert live.reply_bot.calls[0]["chat_id"] == "chat-1"
+    assert any(payload["lwp"] == "/r/MessageStatus/read" for payload in websocket.sent)
+
+
+def test_xianyu_live_enqueues_reviewable_order_for_manual_confirmation(tmp_path):
+    live = XianyuLive.__new__(XianyuLive)
+    live.review_store = ReviewStore(db_path=str(tmp_path / "app.db"))
+    live.review_store.upsert_config(item_id="item-1", content="交易顺利，感谢支持。")
+    websocket = FakeWebSocket()
+    incoming = IncomingMessage(
+        chat_id="chat-1",
+        item_id="item-1",
+        sender_id="buyer-1",
+        sender_name="买家",
+        text="交易成功，待评价",
+        message_id="msg-review-1",
+        message_time=1781430000000,
+        raw={},
+        is_from_self=False,
+        kind="reviewable_order",
+        order_id="order-1",
+        is_reviewable_order=True,
+    )
+
+    result = asyncio.run(live.handle_reviewable_order_message(incoming, websocket))
+
+    assert result.status == "pending_confirmation"
+    assert live.review_store.list_tasks(status="pending_confirmation")[0].content == "交易顺利，感谢支持。"
     assert any(payload["lwp"] == "/r/MessageStatus/read" for payload in websocket.sent)
 
 

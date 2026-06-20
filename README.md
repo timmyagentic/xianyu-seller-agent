@@ -18,7 +18,7 @@
 
 ## 当前仓库状态
 
-当前仓库已迁入 `XianyuAutoAgent` 的自动回复基线代码，并补充了本地 Python 脚手架、共享消息解析层、SQLite 发货配置 CLI、幂等虚拟发货服务、API 发货客户端、订单详情解析、重新上架任务记录、真实商品状态刷新、商品归属校验、授权 Playwright 重新上架执行器和上架后发货配置绑定。真实付款消息和真实重新上架仍需要账号授权后的人工验收；遇到登录失效、滑块、验证码或风控时只记录结构化失败，不做绕过。现有文档和项目文件用于约束后续实现边界：
+当前仓库已迁入 `XianyuAutoAgent` 的自动回复基线代码，并补充了本地 Python 脚手架、共享消息解析层、SQLite 发货配置 CLI、幂等虚拟发货服务、API 发货客户端、订单详情解析、重新上架任务记录、真实商品状态刷新、商品归属校验、授权 Playwright 重新上架执行器、上架后发货配置绑定和成交后评价队列。真实付款消息、真实重新上架和真实评价提交仍需要账号授权后的人工验收；遇到登录失效、滑块、验证码或风控时只记录结构化失败，不做绕过。现有文档和项目文件用于约束后续实现边界：
 
 - [MVP 设计](docs/superpowers/specs/2026-06-14-xianyu-seller-agent-mvp-design.md)
 - [参考实现映射](docs/reference-implementation-map.md)
@@ -60,7 +60,8 @@ xianyu-seller-agent/
 ├── services/
 │   ├── messages/              # 消息解析、去重、分发
 │   ├── delivery/              # 自动发货配置、触发、发送、日志
-│   └── listing/               # 已有商品重新上架、商品状态校验、发货绑定
+│   ├── listing/               # 已有商品重新上架、商品状态校验、发货绑定
+│   └── review/                # 成交后评价配置、待确认队列和浏览器提交
 ├── prompts/                   # 回复 prompt 模板
 ├── data/                      # 本地 SQLite 和运行时文件，禁止提交
 ├── relist/                    # 本地重新上架任务配置示例
@@ -140,6 +141,7 @@ python main.py --help
 python main.py web --host 127.0.0.1 --port 8765
 python main.py delivery --help
 python main.py listing --help
+python main.py review --help
 ```
 
 自动发货配置 CLI：
@@ -153,6 +155,22 @@ python main.py delivery inventory list --config-id 2
 ```
 
 `text` 类型适合同一商品所有买家收到相同内容；`data` 类型适合卡密、兑换码、账号 key 等一次性库存。`delivery inventory list` 默认只显示库存状态，不显示正文；确需本地排查时再加 `--show-content`。`relist/local-keys.txt` 这类库存文件只应放本地，不要提交。
+
+成交后评价队列 CLI：
+
+```bash
+python main.py review config suggest --item-id 123
+python main.py review config set --item-id 123 --content "交易顺利，沟通友好，感谢支持。"
+python main.py review config list
+python main.py review queue list --status pending_confirmation
+python main.py review queue set-url --task-id 1 --review-url "https://..."
+python main.py review preflight --task-id 1
+python main.py review submit --task-id 1 --confirm-real-review
+```
+
+评价队列只做“自动入队、人工确认后单条提交”：运行时检测到“交易成功、交易完成、待评价、评价买家”等完成订单消息后，会按 `order_id` 幂等写入 `review_tasks`，任务初始状态为 `pending_confirmation`。每个商品需要先用 `review config set` 配置一条固定五星正向文案；没有配置的商品只记录 `skipped_no_config`，不会进入待提交队列。`review submit` 没有 `--confirm-real-review` 时只返回 `real_review_confirmation_required`，不会打开浏览器。真实提交路径通过 Playwright 访问评价 URL、点击五星、填写固定文案并提交；只有页面出现明确“评价成功/已评价/提交成功”等确认时才标记 `submitted`。遇到登录、滑块、验证码、风控、权限不足、找不到评价入口、找不到五星控件、找不到文本框、找不到提交按钮或提交后没有确认结果时，会停止并记录结构化失败和截图，不调用未知评价 API，不提供一键批量提交。
+
+第一版如果没有可推导的评价 URL，可以先让任务入队，再用 `review queue set-url` 补充页面入口。也可以配置 `AUTO_REVIEW_ORDER_URL_TEMPLATE`，模板里包含 `{order_id}` 时，`preflight` 和 `submit` 会按订单号生成目标页面。
 
 重新上架任务 CLI：
 
@@ -210,11 +228,14 @@ Playwright 路径会参考 `xianyu-auto-reply` 的页面初始化策略：先访
 - `AUTO_RELIST_SCREENSHOT_DIR=data/relist-screenshots`：授权浏览器路径保存页面证据的本地目录，默认不提交。
 - `AUTO_RELIST_PLAYWRIGHT_HEADLESS=true`：重新上架浏览器执行器是否无头运行；也兼容旧的 `PLAYWRIGHT_HEADLESS`。
 - `AUTO_RELIST_MANAGEMENT_URL=`：可选覆盖重新上架 Playwright 目标页。为空时，无目标库存默认使用 `www.goofish.com/publish?itemId=...&editScene=rePutOn`；带目标库存默认使用 `https://seller.goofish.com/?site=COMMONPRO#/seller-item/publish?itemId=...&editScene=rePutOn`。商品管理排查可临时设为 `https://seller.goofish.com/?site=COMMONPRO#/seller-item/goods-manage`，但它不一定提供重新发布按钮。
+- `AUTO_REVIEW_ORDER_URL_TEMPLATE=`：可选评价页或订单详情页模板，包含 `{order_id}` 时可用于 `review preflight/submit` 自动生成目标 URL；为空时需要给任务设置 `review_url`。
+- `AUTO_REVIEW_SCREENSHOT_DIR=data/review-screenshots`：评价浏览器路径保存页面证据的本地目录，默认不提交。
+- `AUTO_REVIEW_PLAYWRIGHT_HEADLESS=true`：评价浏览器执行器是否无头运行；也兼容旧的 `PLAYWRIGHT_HEADLESS`。
 - `AUTO_PUBLISH_URL=`：可选覆盖新商品发布 Playwright 目标页。鱼小铺发布可设为 `https://seller.goofish.com/?site=COMMONPRO#/seller-item/publish`；为空时使用普通 `www.goofish.com/publish`。
 - `AUTO_PUBLISH_SCREENSHOT_DIR=data/publish-screenshots`：发布新商品浏览器路径保存页面证据的本地目录，默认不提交。
 - `AUTO_PUBLISH_PLAYWRIGHT_HEADLESS=true`：发布新商品浏览器执行器是否无头运行；也兼容旧的 `PLAYWRIGHT_HEADLESS`。
 
-普通聊天自动回复只对已配置商品生效：商品必须存在启用的发货配置，或存在启用的自动重新上架配置；未配置商品不会获取商品详情、不会进入 LLM，也不会发送自动回复。
+普通聊天自动回复只对已配置商品生效：商品必须存在启用的发货配置或自动重新上架配置；未配置商品不会获取商品详情、不会进入 LLM，也不会发送自动回复。评价配置只影响成交后评价队列，不会单独打开普通聊天自动回复。
 
 商品知识库使用本地 Markdown 文件维护，默认路径是 `data/item_knowledge/<item_id>.md`，例如 `data/item_knowledge/1030573156061.md`。自动回复生成前会把当前商品的 Markdown 知识库附加到商品信息后面，要求模型优先依据商品信息和知识库回答；如果商品信息和知识库都没有明确答案，应回复“这个我确认一下，稍后回复你”，不要编造。`ITEM_KNOWLEDGE_DIR` 可覆盖知识库目录，`ITEM_KNOWLEDGE_MAX_CHARS` 控制单个商品注入 prompt 的最大字符数。
 
@@ -229,13 +250,14 @@ Playwright 路径会参考 `xianyu-auto-reply` 的页面初始化策略：先访
 默认验证只使用单元测试、fake/mocks 和 CLI 帮助命令，不需要真实闲鱼账号：
 
 ```bash
-python -m py_compile main.py XianyuApis.py XianyuAgent.py context_manager.py xianyu_qr_login.py utils/xianyu_utils.py services/messages/*.py services/delivery/*.py services/listing/*.py
+python -m py_compile main.py XianyuApis.py XianyuAgent.py context_manager.py xianyu_qr_login.py utils/xianyu_utils.py services/messages/*.py services/delivery/*.py services/listing/*.py services/review/*.py
 python -m pytest -q
 python main.py --help
 python main.py web --help
 python main.py delivery --help
 python main.py delivery inventory --help
 python main.py listing --help
+python main.py review --help
 ```
 
 人工验收需要用户明确提供账号授权后再做：
