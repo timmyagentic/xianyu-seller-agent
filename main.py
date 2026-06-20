@@ -114,6 +114,20 @@ class XianyuLive:
         
         # 模拟人工输入配置
         self.simulate_human_typing = os.getenv("SIMULATE_HUMAN_TYPING", "False").lower() == "true"
+        self.reply_generation_timeout = self._env_float("REPLY_GENERATION_TIMEOUT", 25.0, minimum=1.0)
+
+    def _env_float(self, name: str, default: float, *, minimum: float | None = None) -> float:
+        raw_value = os.getenv(name)
+        if raw_value is None or raw_value == "":
+            return default
+        try:
+            value = float(raw_value)
+        except ValueError:
+            logger.warning(f"{name} 无效，使用默认值: {default}")
+            return default
+        if minimum is not None:
+            return max(minimum, value)
+        return value
 
     def sync_runtime_cookies(self):
         """Sync the latest API-session cookies into WebSocket runtime headers."""
@@ -314,6 +328,55 @@ class XianyuLive:
             raise RuntimeError("WebSocket is not connected")
         await self.send_msg(self.ws, chat_id, buyer_id, content)
         return True
+
+    async def generate_reply_with_timeout(
+        self,
+        send_message: str,
+        item_description: str,
+        *,
+        context,
+        item_id: str,
+        chat_id: str,
+    ) -> tuple[str, str | None]:
+        timeout = getattr(self, "reply_generation_timeout", 25.0)
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.generate_reply_sync,
+                    send_message,
+                    item_description,
+                    context=context,
+                    item_id=item_id,
+                    chat_id=chat_id,
+                ),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"回复生成超过 {timeout:.1f} 秒，使用兜底回复: 会话={chat_id}, 商品={item_id}")
+            self.reply_bot.last_intent = "timeout"
+            return FALLBACK_REPLY, "timeout"
+        except Exception as exc:
+            logger.warning(f"回复生成异常，使用兜底回复: 会话={chat_id}, 商品={item_id}, error={exc}")
+            self.reply_bot.last_intent = "error"
+            return FALLBACK_REPLY, "error"
+
+    def generate_reply_sync(
+        self,
+        send_message: str,
+        item_description: str,
+        *,
+        context,
+        item_id: str,
+        chat_id: str,
+    ) -> tuple[str, str | None]:
+        reply = self.reply_bot.generate_reply(
+            send_message,
+            item_description,
+            context=context,
+            item_id=item_id,
+            chat_id=chat_id,
+        )
+        return reply, getattr(self.reply_bot, "last_intent", None)
 
     async def fetch_order_detail_for_delivery(self, order_id: str) -> OrderDetail:
         """Fetch order detail when the API method is available; otherwise use safe defaults."""
@@ -703,18 +766,19 @@ class XianyuLive:
             logger.info(f"使用商品事实保护回复: {bot_reply}")
         else:
             # 生成回复
-            bot_reply = self.reply_bot.generate_reply(
+            bot_reply, reply_intent = await self.generate_reply_with_timeout(
                 send_message,
                 item_description,
                 context=context,
                 item_id=item_id,
                 chat_id=chat_id,
             )
+            self.reply_bot.last_intent = reply_intent
             bot_reply = self.guard_fact_reply(
                 bot_reply,
                 item_info,
                 item_id,
-                intent=self.reply_bot.last_intent,
+                intent=reply_intent,
             )
 
         # 检查是否需要回复

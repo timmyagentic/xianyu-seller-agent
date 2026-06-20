@@ -8,6 +8,7 @@ from services.messages.knowledge import ItemKnowledgeBase, UnknownQuestionLog, l
 
 
 DEFAULT_MODEL_BASE_URL = "https://api-inference.modelscope.cn/v1"
+DEFAULT_MODEL_REQUEST_TIMEOUT = 12.0
 DEFAULT_MODEL_NAMES = (
     "ZhipuAI/GLM-5.2",
     "Qwen/Qwen3.5-397B-A17B",
@@ -52,6 +53,7 @@ class XianyuReplyBot:
         self.client = OpenAI(
             api_key=os.getenv("API_KEY"),
             base_url=os.getenv("MODEL_BASE_URL", DEFAULT_MODEL_BASE_URL),
+            timeout=self._model_request_timeout(),
         )
         self.knowledge_base = knowledge_base or ItemKnowledgeBase()
         self.unknown_question_log = unknown_question_log or UnknownQuestionLog()
@@ -59,6 +61,14 @@ class XianyuReplyBot:
         self._init_agents()
         self.router = IntentRouter(self.agents['classify'])
         self.last_intent = None  # 记录最后一次意图
+
+    def _model_request_timeout(self) -> float:
+        configured = os.getenv("MODEL_REQUEST_TIMEOUT", str(DEFAULT_MODEL_REQUEST_TIMEOUT))
+        try:
+            return max(1.0, float(configured))
+        except ValueError:
+            logger.warning(f"MODEL_REQUEST_TIMEOUT 无效，使用默认值: {DEFAULT_MODEL_REQUEST_TIMEOUT}")
+            return DEFAULT_MODEL_REQUEST_TIMEOUT
 
 
     def _init_agents(self):
