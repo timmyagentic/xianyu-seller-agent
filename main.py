@@ -174,7 +174,11 @@ class XianyuLive:
         """Only configured items are allowed to enter automatic workflows."""
         if not item_id:
             return False
-        return self.has_enabled_delivery_config(item_id) or self.has_enabled_auto_relist_config(item_id)
+        return (
+            self.has_enabled_delivery_config(item_id)
+            or self.has_enabled_auto_relist_config(item_id)
+            or self.has_enabled_review_config(item_id)
+        )
 
     async def refresh_token(self):
         """刷新token"""
@@ -508,6 +512,26 @@ class XianyuLive:
             logger.error(f"检查系统消息失败: {e}")
             return False
 
+    def is_review_reminder_message(self, message):
+        """检查是否为平台发出的待评价提醒。"""
+        try:
+            text = str(message or "").strip()
+            return any(
+                keyword in text
+                for keyword in (
+                    "快给ta一个评价",
+                    "快给TA一个评价",
+                    "评价买家",
+                    "买家已确认收货",
+                    "已确认收货",
+                    "交易成功",
+                    "待评价",
+                    "去评价",
+                )
+            )
+        except Exception:
+            return False
+
     def check_toggle_keywords(self, message):
         """检查消息是否包含切换关键词"""
         message_stripped = message.strip()
@@ -724,6 +748,11 @@ class XianyuLive:
 
         logger.info(f"用户: {send_user_name} (ID: {send_user_id}), 商品: {item_id}, 会话: {chat_id}, 消息: {send_message}")
 
+        if self.is_review_reminder_message(send_message):
+            task = await self.handle_review_reminder_message(incoming, websocket)
+            if task is not None:
+                return
+
         if not self.auto_reply_enabled:
             logger.info(f"自动回复已关闭，跳过会话 {chat_id} 的普通聊天回复")
             return
@@ -867,6 +896,51 @@ class XianyuLive:
         task = self.review_store.enqueue_from_message(incoming)
         logger.info(
             "评价任务入队结果: 订单={}, 商品={}, 会话={}, 状态={}, 原因={}",
+            task.order_id,
+            task.item_id,
+            task.chat_id,
+            task.status,
+            task.failed_reason,
+        )
+        await self.mark_message_read(websocket, incoming.chat_id, incoming.message_id)
+        return task
+
+    async def handle_review_reminder_message(self, incoming, websocket):
+        delivery_store = getattr(self, "delivery_store", None)
+        review_store = getattr(self, "review_store", None)
+        if delivery_store is None or review_store is None:
+            logger.warning("评价提醒缺少本地存储，跳过入队")
+            return None
+
+        latest_order = delivery_store.get_latest_successful_order(
+            chat_id=incoming.chat_id,
+            item_id=incoming.item_id,
+            buyer_id=incoming.sender_id,
+        )
+        if not latest_order:
+            latest_order = delivery_store.get_latest_successful_order(
+                chat_id=incoming.chat_id,
+                item_id=incoming.item_id,
+            )
+        if not latest_order:
+            logger.warning(
+                "评价提醒未找到可关联的成功发货订单: 商品={}, 会话={}, 买家={}",
+                incoming.item_id,
+                incoming.chat_id,
+                incoming.sender_id,
+            )
+            return None
+
+        buyer_name = "" if incoming.sender_name == incoming.text else incoming.sender_name
+        task = review_store.enqueue_task(
+            order_id=latest_order["order_no"],
+            item_id=latest_order["item_id"],
+            buyer_id=latest_order["buyer_id"] or incoming.sender_id,
+            buyer_name=buyer_name,
+            chat_id=latest_order["chat_id"] or incoming.chat_id,
+        )
+        logger.info(
+            "评价提醒入队结果: 订单={}, 商品={}, 会话={}, 状态={}, 原因={}",
             task.order_id,
             task.item_id,
             task.chat_id,

@@ -59,6 +59,47 @@ def test_text_delivery_sends_rendered_content_once(tmp_path):
     assert store.has_sent_order("order-1") is True
 
 
+def test_delivery_store_finds_latest_successful_order_for_review(tmp_path):
+    store = DeliveryStore(db_path=str(tmp_path / "delivery.db"))
+    store.record_delivery_log(
+        order_no="order-old",
+        chat_id="chat-1",
+        item_id="item-1",
+        buyer_id="buyer-1",
+        config_id=1,
+        content="old",
+        status="sent",
+    )
+    store.record_delivery_log(
+        order_no="order-new",
+        chat_id="chat-1",
+        item_id="item-1",
+        buyer_id="buyer-1",
+        config_id=1,
+        content="new",
+        status="platform_confirmed",
+    )
+    store.record_delivery_log(
+        order_no="order-other",
+        chat_id="chat-2",
+        item_id="item-1",
+        buyer_id="buyer-2",
+        config_id=1,
+        content="other",
+        status="platform_confirmed",
+    )
+
+    latest = store.get_latest_successful_order(chat_id="chat-1", item_id="item-1", buyer_id="buyer-1")
+
+    assert latest == {
+        "order_no": "order-new",
+        "chat_id": "chat-1",
+        "item_id": "item-1",
+        "buyer_id": "buyer-1",
+        "status": "platform_confirmed",
+    }
+
+
 def test_delivery_service_runs_post_delivery_hook_after_success(tmp_path):
     store = DeliveryStore(db_path=str(tmp_path / "delivery.db"))
     store.add_config(item_id="item-1", name="文本", delivery_type="text", content="content")

@@ -338,6 +338,31 @@ class DeliveryStore:
             ).fetchone()
         return row is not None
 
+    def get_latest_successful_order(self, *, chat_id: str, item_id: str, buyer_id: str | None = None) -> dict | None:
+        query = """
+            SELECT order_no, chat_id, item_id, buyer_id, status
+            FROM delivery_logs
+            WHERE chat_id = ?
+              AND item_id = ?
+              AND status IN ('platform_confirmed', 'platform_already_delivered', 'sent')
+        """
+        params: list[object] = [str(chat_id or ""), str(item_id or "")]
+        if buyer_id:
+            query += " AND buyer_id = ?"
+            params.append(str(buyer_id))
+        query += " ORDER BY id DESC LIMIT 1"
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(query, tuple(params)).fetchone()
+        if not row:
+            return None
+        return {
+            "order_no": row[0],
+            "chat_id": row[1] or "",
+            "item_id": row[2] or "",
+            "buyer_id": row[3] or "",
+            "status": row[4],
+        }
+
     def record_delivery_log(
         self,
         *,
