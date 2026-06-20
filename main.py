@@ -969,10 +969,11 @@ class XianyuLive:
         allow_playwright = config.allow_playwright or os.getenv("AUTO_RELIST_ALLOW_PLAYWRIGHT", "false").lower() == "true"
         confirm_playwright = os.getenv("AUTO_RELIST_CONFIRM_PLAYWRIGHT", "false").lower() == "true"
         cookie_string = self.sync_runtime_cookies()
+        # 鱼小铺多库存由平台在成交后扣减；发货后 hook 不通过发布表单补库存。
         relist_executor = _build_playwright_relist_executor(
             cookies_str=cookie_string,
             allow_playwright=allow_playwright and confirm_playwright,
-            target_stock=config.target_stock,
+            target_stock=None,
         )
         playwright_required_reason = "auto_relist_confirmation_required" if allow_playwright and not confirm_playwright else ""
         service = RelistService(
@@ -987,11 +988,10 @@ class XianyuLive:
             {
                 "item_id": order.item_id,
                 "expected_title": config.expected_title or order.item_title,
-                "target_stock": config.target_stock,
             }
         )
         logger.info(
-            "发货后自动重新上架结果: 订单={}, 商品={}, 目标库存={}, 状态={}, 原因={}",
+            "发货后自动重新上架结果: 订单={}, 商品={}, 配置目标库存={}, 状态={}, 原因={}",
             order.order_id,
             order.item_id,
             config.target_stock,

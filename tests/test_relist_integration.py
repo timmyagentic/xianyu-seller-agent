@@ -6,7 +6,7 @@ from main import XianyuLive, run_cli
 from services.delivery.orders import OrderInfo
 from services.delivery.service import DeliveryResult
 from services.listing.models import RelistResult
-from services.listing.playwright_relist import SELLER_PUBLISH_RELIST_URL
+from services.listing.playwright_relist import SELLER_MANAGEMENT_URL, SELLER_PUBLISH_RELIST_URL
 from services.listing.store import ListingStore
 
 
@@ -263,7 +263,7 @@ def test_post_delivery_relist_allow_playwright_does_not_create_executor_without_
     assert service.kwargs["relist_executor"] is None
     assert service.kwargs["playwright_required_reason"] == "auto_relist_confirmation_required"
     assert FakePlaywrightExecutor.instances == []
-    assert service.requests[0]["target_stock"] == 7
+    assert "target_stock" not in service.requests[0]
 
 
 def test_post_delivery_relist_confirm_playwright_creates_authorized_executor(tmp_path, monkeypatch):
@@ -297,8 +297,39 @@ def test_post_delivery_relist_confirm_playwright_creates_authorized_executor(tmp
     assert service.kwargs["allow_playwright"] is True
     assert isinstance(service.kwargs["relist_executor"], FakePlaywrightExecutor)
     assert service.kwargs["relist_executor"].kwargs["cookies_str"]
-    assert service.kwargs["relist_executor"].kwargs["management_url"] == SELLER_PUBLISH_RELIST_URL
-    assert service.requests[0]["target_stock"] == 7
+    assert service.kwargs["relist_executor"].kwargs["management_url"] == SELLER_MANAGEMENT_URL
+    assert "target_stock" not in service.requests[0]
+
+
+def test_post_delivery_relist_omits_target_stock_from_platform_action(tmp_path, monkeypatch):
+    FakeRelistService.instances = []
+    FakePlaywrightExecutor.instances = []
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "listing.db"))
+    monkeypatch.setenv("AUTO_RELIST_ENABLED", "true")
+    monkeypatch.setenv("AUTO_RELIST_ALLOW_PLAYWRIGHT", "true")
+    monkeypatch.setenv("AUTO_RELIST_CONFIRM_PLAYWRIGHT", "true")
+    monkeypatch.setattr(main, "RelistService", FakeRelistService)
+    monkeypatch.setattr(main, "PlaywrightRelistExecutor", FakePlaywrightExecutor, raising=False)
+
+    live = XianyuLive("unb=seller-1; _m_h5_tk=token_123", reply_bot=object())
+    ListingStore(db_path=str(tmp_path / "listing.db")).upsert_auto_relist_config(
+        item_id="item-1",
+        target_stock=7,
+        expected_title="资料包",
+        enabled=True,
+        allow_playwright=True,
+    )
+
+    asyncio.run(
+        live.handle_post_delivery_relist(
+            OrderInfo(order_id="order-1", item_id="item-1", buyer_id="buyer-1", chat_id="chat-1"),
+            DeliveryResult(status="sent", order_id="order-1"),
+        )
+    )
+
+    service = FakeRelistService.instances[0]
+    assert "target_stock" not in service.requests[0]
+    assert FakePlaywrightExecutor.instances[0].kwargs["management_url"] == SELLER_MANAGEMENT_URL
 
 
 def test_post_delivery_relist_skips_non_sent_delivery_result(tmp_path, monkeypatch):
