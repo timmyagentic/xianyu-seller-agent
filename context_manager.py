@@ -5,6 +5,9 @@ from datetime import datetime
 from loguru import logger
 
 
+VALID_MESSAGE_SOURCES = {"user", "manual", "bot", "unknown"}
+
+
 class ChatContextManager:
     """
     聊天上下文管理器
@@ -44,16 +47,34 @@ class ChatContextManager:
             role TEXT NOT NULL,
             content TEXT NOT NULL,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            chat_id TEXT
+            chat_id TEXT,
+            source TEXT NOT NULL DEFAULT 'unknown'
         )
         ''')
         
-        # 检查是否需要添加chat_id字段（兼容旧数据库）
+        # 检查是否需要添加字段（兼容旧数据库）
         cursor.execute("PRAGMA table_info(messages)")
         columns = [column[1] for column in cursor.fetchall()]
         if 'chat_id' not in columns:
             cursor.execute('ALTER TABLE messages ADD COLUMN chat_id TEXT')
             logger.info("已为messages表添加chat_id字段")
+        if 'source' not in columns:
+            cursor.execute("ALTER TABLE messages ADD COLUMN source TEXT NOT NULL DEFAULT 'unknown'")
+            logger.info("已为messages表添加source字段")
+        cursor.execute(
+            """
+            UPDATE messages
+            SET source = 'user'
+            WHERE role = 'user' AND (source IS NULL OR source = '' OR source = 'unknown')
+            """
+        )
+        cursor.execute(
+            """
+            UPDATE messages
+            SET source = 'unknown'
+            WHERE source IS NULL OR source = ''
+            """
+        )
         
         # 创建索引以加速查询
         cursor.execute('''
@@ -66,6 +87,10 @@ class ChatContextManager:
         
         cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_timestamp ON messages (timestamp)
+        ''')
+
+        cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_source_timestamp ON messages (source, timestamp)
         ''')
         
         # 创建基于会话ID的议价次数表
@@ -168,7 +193,7 @@ class ChatContextManager:
         finally:
             conn.close()
 
-    def add_message_by_chat(self, chat_id, user_id, item_id, role, content):
+    def add_message_by_chat(self, chat_id, user_id, item_id, role, content, source=None):
         """
         基于会话ID添加新消息到对话历史
         
@@ -178,15 +203,20 @@ class ChatContextManager:
             item_id: 商品ID
             role: 消息角色 (user/assistant)
             content: 消息内容
+            source: 消息来源 (user/manual/bot/unknown)
         """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
         try:
+            message_source = self._normalize_message_source(role, source)
             # 插入新消息，使用chat_id作为额外标识
             cursor.execute(
-                "INSERT INTO messages (user_id, item_id, role, content, timestamp, chat_id) VALUES (?, ?, ?, ?, ?, ?)",
-                (user_id, item_id, role, content, datetime.now().isoformat(), chat_id)
+                """
+                INSERT INTO messages (user_id, item_id, role, content, timestamp, chat_id, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (user_id, item_id, role, content, datetime.now().isoformat(), chat_id, message_source)
             )
             
             # 检查是否需要清理旧消息（基于chat_id）
@@ -210,6 +240,63 @@ class ChatContextManager:
             conn.rollback()
         finally:
             conn.close()
+
+    def get_messages_by_source(self, source, since=None, limit=None):
+        """
+        按来源查询消息，主要用于精确拉取人工回复。
+
+        Args:
+            source: 消息来源 (manual/bot/user/unknown)
+            since: 可选 ISO 时间字符串，只返回该时间之后的消息
+            limit: 可选最大返回条数
+        """
+        message_source = self._normalize_message_source(None, source)
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        query = """
+            SELECT chat_id, user_id, item_id, role, content, source
+            FROM messages
+            WHERE source = ?
+        """
+        params = [message_source]
+        if since:
+            query += " AND timestamp >= ?"
+            params.append(since)
+        query += " ORDER BY id ASC"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(int(limit))
+
+        try:
+            cursor.execute(query, params)
+            return [
+                {
+                    "chat_id": chat_id,
+                    "user_id": user_id,
+                    "item_id": item_id,
+                    "role": role,
+                    "content": content,
+                    "source": row_source,
+                }
+                for chat_id, user_id, item_id, role, content, row_source in cursor.fetchall()
+            ]
+        except Exception as e:
+            logger.error(f"按消息来源查询对话历史时出错: {e}")
+            return []
+        finally:
+            conn.close()
+
+    def _normalize_message_source(self, role, source):
+        if source is None:
+            if role == "user":
+                return "user"
+            return "unknown"
+        message_source = str(source).strip().lower()
+        if message_source in VALID_MESSAGE_SOURCES:
+            return message_source
+        logger.warning(f"未知消息来源 {source}，记录为 unknown")
+        return "unknown"
 
     def get_context_by_chat(self, chat_id):
         """

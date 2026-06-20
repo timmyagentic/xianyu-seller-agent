@@ -718,7 +718,7 @@ class XianyuLive:
                 return
 
             # 记录卖家人工回复
-            self.context_manager.add_message_by_chat(chat_id, self.myid, item_id, "assistant", send_message)
+            self.context_manager.add_message_by_chat(chat_id, self.myid, item_id, "assistant", send_message, "manual")
             logger.info(f"卖家人工回复 (会话: {chat_id}, 商品: {item_id}): {send_message}")
             return
 
@@ -732,7 +732,7 @@ class XianyuLive:
         if self.is_manual_mode(chat_id):
             logger.info(f"🔴 会话 {chat_id} 处于人工接管模式，跳过自动回复")
             # 添加用户消息到上下文
-            self.context_manager.add_message_by_chat(chat_id, send_user_id, item_id, "user", send_message)
+            self.context_manager.add_message_by_chat(chat_id, send_user_id, item_id, "user", send_message, "user")
             return
         # 检查是否为带中括号的系统消息
         if self.is_bracket_system_message(send_message):
@@ -787,7 +787,7 @@ class XianyuLive:
             return
 
         # 添加用户消息到上下文
-        self.context_manager.add_message_by_chat(chat_id, send_user_id, item_id, "user", send_message)
+        self.context_manager.add_message_by_chat(chat_id, send_user_id, item_id, "user", send_message, "user")
 
         # 检查是否为价格意图，如果是则增加议价次数
         if self.reply_bot.last_intent == "price":
@@ -796,7 +796,7 @@ class XianyuLive:
             logger.info(f"用户 {send_user_name} 对商品 {item_id} 的议价次数: {bargain_count}")
 
         # 添加机器人回复到上下文
-        self.context_manager.add_message_by_chat(chat_id, self.myid, item_id, "assistant", bot_reply)
+        self.context_manager.add_message_by_chat(chat_id, self.myid, item_id, "assistant", bot_reply, "bot")
 
         logger.info(f"机器人回复: {bot_reply}")
 

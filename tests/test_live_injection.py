@@ -126,6 +126,35 @@ class FakeReplyBot:
         return "自动回复"
 
 
+class RecordingContextManager:
+    def __init__(self):
+        self.saved_messages = []
+
+    def get_item_info(self, item_id):
+        return {"title": "资料包", "soldPrice": 990, "quantity": 1, "skuList": []}
+
+    def get_context_by_chat(self, chat_id):
+        return []
+
+    def add_message_by_chat(self, chat_id, user_id, item_id, role, content, source=None):
+        self.saved_messages.append(
+            {
+                "chat_id": chat_id,
+                "user_id": user_id,
+                "item_id": item_id,
+                "role": role,
+                "content": content,
+                "source": source,
+            }
+        )
+
+    def increment_bargain_count_by_chat(self, chat_id):
+        return None
+
+    def get_bargain_count_by_chat(self, chat_id):
+        return 0
+
+
 class SlowReplyBot:
     def __init__(self, delay=0.2):
         self.delay = delay
@@ -149,6 +178,95 @@ class SlowReplyBot:
 def _decode_sent_text(payload):
     encoded = payload["body"][0]["content"]["custom"]["data"]
     return json.loads(base64.b64decode(encoded).decode("utf-8"))["text"]["text"]
+
+
+def _configured_live_for_chat(tmp_path, reply_bot=None, context_manager=None):
+    live = XianyuLive.__new__(XianyuLive)
+    live.auto_reply_enabled = True
+    live.myid = "seller-1"
+    live.manual_mode_conversations = set()
+    live.manual_mode_timestamps = {}
+    live.manual_mode_timeout = 3600
+    live.toggle_keywords = {"人工", "接管", "恢复自动"}
+    live.simulate_human_typing = False
+    live.reply_generation_timeout = 1.0
+    live.delivery_store = DeliveryStore(db_path=str(tmp_path / "app.db"))
+    live.delivery_store.add_config(item_id="item-1", name="文本", delivery_type="text", content="发货内容")
+    live.delivery_service = type("FakeDeliveryService", (), {"enabled": True})()
+    live.listing_store = None
+    live.reply_bot = reply_bot or FakeReplyBot()
+    live.context_manager = context_manager or RecordingContextManager()
+    return live
+
+
+def test_xianyu_live_records_manual_reply_source(tmp_path):
+    context = RecordingContextManager()
+    live = _configured_live_for_chat(tmp_path, context_manager=context)
+    websocket = FakeWebSocket()
+    incoming = IncomingMessage(
+        chat_id="chat-1",
+        item_id="item-1",
+        sender_id="seller-1",
+        sender_name="卖家",
+        text="不能",
+        message_id="msg-chat-1",
+        message_time=1781430000000,
+        raw={},
+        is_from_self=True,
+        kind="chat",
+    )
+
+    asyncio.run(live.handle_incoming_message(incoming, websocket))
+
+    assert context.saved_messages == [
+        {
+            "chat_id": "chat-1",
+            "user_id": "seller-1",
+            "item_id": "item-1",
+            "role": "assistant",
+            "content": "不能",
+            "source": "manual",
+        }
+    ]
+
+
+def test_xianyu_live_records_bot_reply_source(tmp_path):
+    context = RecordingContextManager()
+    live = _configured_live_for_chat(tmp_path, context_manager=context)
+    websocket = FakeWebSocket()
+    incoming = IncomingMessage(
+        chat_id="chat-1",
+        item_id="item-1",
+        sender_id="buyer-1",
+        sender_name="买家",
+        text="体验结束能续费吗",
+        message_id="msg-chat-1",
+        message_time=1781430000000,
+        raw={},
+        is_from_self=False,
+        kind="chat",
+    )
+
+    asyncio.run(live.handle_incoming_message(incoming, websocket))
+
+    assert context.saved_messages == [
+        {
+            "chat_id": "chat-1",
+            "user_id": "buyer-1",
+            "item_id": "item-1",
+            "role": "user",
+            "content": "体验结束能续费吗",
+            "source": "user",
+        },
+        {
+            "chat_id": "chat-1",
+            "user_id": "seller-1",
+            "item_id": "item-1",
+            "role": "assistant",
+            "content": "自动回复",
+            "source": "bot",
+        },
+    ]
 
 
 def test_xianyu_live_falls_back_when_reply_generation_times_out(tmp_path):
