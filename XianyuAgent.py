@@ -8,7 +8,14 @@ from services.messages.knowledge import ItemKnowledgeBase, UnknownQuestionLog, l
 
 
 DEFAULT_MODEL_BASE_URL = "https://api-inference.modelscope.cn/v1"
-DEFAULT_MODEL_NAME = "deepseek-ai/DeepSeek-V4-Pro"
+DEFAULT_MODEL_NAMES = (
+    "ZhipuAI/GLM-5.2",
+    "Qwen/Qwen3.5-397B-A17B",
+    "deepseek-ai/DeepSeek-V4-Flash",
+    "MiniMax/MiniMax-M3",
+    "XiaomiMiMo/MiMo-V2-Flash",
+)
+DEFAULT_MODEL_NAME = ",".join(DEFAULT_MODEL_NAMES)
 FALLBACK_REPLY = "这个我确认一下，稍后回复你"
 NO_BARGAIN_REPLY = "这个价格不议，当前标价就是最终价格。如能接受，可以直接拍。"
 NO_BARGAIN_DISABLED_VALUES = {"0", "false", "no", "off"}
@@ -349,26 +356,43 @@ class BaseAgent:
 
     def _call_llm(self, messages: List[Dict], temperature: float = 0.4) -> str:
         """调用大模型"""
-        response = self.client.chat.completions.create(
-            model=os.getenv("MODEL_NAME", DEFAULT_MODEL_NAME),
+        return self._create_completion(
             messages=messages,
             temperature=temperature,
             max_tokens=500,
             top_p=0.8
         )
-        return self._extract_response_text(response)
 
     def _create_completion(self, messages: List[Dict], temperature: float = 0.4, **kwargs) -> str:
         request = {
-            "model": os.getenv("MODEL_NAME", DEFAULT_MODEL_NAME),
             "messages": messages,
             "temperature": temperature,
             "max_tokens": 500,
             "top_p": 0.8,
         }
         request.update(kwargs)
-        response = self.client.chat.completions.create(**request)
-        return self._extract_response_text(response)
+        errors = []
+        models = self._configured_model_names()
+        for index, model_name in enumerate(models):
+            model_request = dict(request)
+            model_request["model"] = model_name
+            try:
+                response = self.client.chat.completions.create(**model_request)
+                return self._extract_response_text(response)
+            except Exception as exc:
+                errors.append(f"{model_name}: {exc}")
+                if index < len(models) - 1:
+                    logger.warning(f"模型调用失败，尝试下一个 fallback: model={model_name}, error={exc}")
+                    continue
+                logger.warning(f"所有模型调用失败: {'; '.join(errors)}")
+        raise LLMResponseError(f"All configured models failed: {'; '.join(errors)}")
+
+    def _configured_model_names(self) -> List[str]:
+        configured = os.getenv("MODEL_NAME", DEFAULT_MODEL_NAME)
+        models = [model.strip() for model in configured.split(",") if model.strip()]
+        if models:
+            return models
+        return list(DEFAULT_MODEL_NAMES)
 
     def _extract_response_text(self, response: Any) -> str:
         choices = getattr(response, "choices", None)
@@ -445,19 +469,12 @@ class TechAgent(BaseAgent):
         messages = self._build_messages(user_msg, item_desc, context)
         # messages[0]['content'] += "\n▲知识库：\n" + self._fetch_tech_specs()
 
-        request = {
-            "model": os.getenv("MODEL_NAME", DEFAULT_MODEL_NAME),
-            "messages": messages,
-            "temperature": 0.4,
-            "max_tokens": 500,
-            "top_p": 0.8,
-        }
+        kwargs = {}
         if os.getenv("LLM_ENABLE_SEARCH", "").lower() in {"1", "true", "yes", "on"}:
-            request["extra_body"] = {"enable_search": True}
+            kwargs["extra_body"] = {"enable_search": True}
 
-        response = self.client.chat.completions.create(**request)
-
-        return self.safety_filter(self._extract_response_text(response))
+        response = self._create_completion(messages, temperature=0.4, **kwargs)
+        return self.safety_filter(response)
 
 
     # def _fetch_tech_specs(self) -> str:
