@@ -13,6 +13,7 @@ from services.listing.playwright_publish import PlaywrightPublishExecutor
 from services.listing.playwright_relist import PlaywrightRelistExecutor, default_relist_management_url
 from services.listing.relist import RelistService, load_relist_request
 from services.listing.store import ListingStore
+from services.review.store import ReviewStore
 from utils.xianyu_utils import trans_cookies
 
 
@@ -118,6 +119,7 @@ def make_handler(*, db_path: str):
 def summary_payload(db_path: str) -> dict:
     listing_store = ListingStore(db_path=db_path)
     delivery_store = DeliveryStore(db_path=db_path)
+    review_store = ReviewStore(db_path=db_path)
     return {
         "success": True,
         "env": {
@@ -132,6 +134,8 @@ def summary_payload(db_path: str) -> dict:
         "counts": {
             "delivery_configs": len(delivery_store.list_configs()),
             "auto_relist_configs": len(listing_store.list_auto_relist_configs()),
+            "review_configs": len(review_store.list_configs()),
+            "review_tasks": len(review_store.list_tasks(limit=500)),
             "items": len(listing_store.list_item_snapshots(limit=500)),
             "listing_jobs": len(listing_store.list_jobs(limit=500)),
         },

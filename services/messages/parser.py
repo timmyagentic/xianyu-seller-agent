@@ -23,6 +23,26 @@ UNPAID_ORDER_KEYWORDS = (
     "待付款",
     "交易关闭",
 )
+REVIEWABLE_ORDER_KEYWORDS = (
+    "交易成功",
+    "交易完成",
+    "订单已完成",
+    "已完成",
+    "待评价",
+    "去评价",
+    "评价买家",
+    "买家已确认收货",
+    "对方已收货",
+)
+NOT_REVIEWABLE_ORDER_KEYWORDS = (
+    "等待卖家发货",
+    "等待你发货",
+    "等待您发货",
+    "待发货",
+    "待付款",
+    "交易关闭",
+    "退款",
+)
 ORDER_ID_KEYS = {"bizOrderId", "orderId", "order_id", "orderNo", "order_no", "biz_order_id", "tid"}
 ORDER_ID_PATTERNS = (
     re.compile(r"orderId[=:](\d{10,})"),
@@ -68,6 +88,8 @@ class MessageParser:
     def parse_single_message(self, message: dict[str, Any]) -> IncomingMessage | None:
         if self.is_system_tip_message(message) or self.is_typing_status(message):
             return None
+        if self.is_reviewable_order_message(message):
+            return self._parse_reviewable_order_message(message)
         if self.is_paid_order_message(message):
             return self._parse_paid_order_message(message)
         if self.is_chat_message(message):
@@ -115,6 +137,16 @@ class MessageParser:
         if any(keyword in status_text for keyword in UNPAID_ORDER_KEYWORDS):
             return False
         if not any(keyword in status_text for keyword in PAID_ORDER_KEYWORDS):
+            return False
+        return bool(self.extract_order_id(message))
+
+    def is_reviewable_order_message(self, message: dict[str, Any]) -> bool:
+        status_text = self._extract_status_text(message)
+        if not status_text:
+            return False
+        if any(keyword in status_text for keyword in NOT_REVIEWABLE_ORDER_KEYWORDS):
+            return False
+        if not any(keyword in status_text for keyword in REVIEWABLE_ORDER_KEYWORDS):
             return False
         return bool(self.extract_order_id(message))
 
@@ -201,6 +233,29 @@ class MessageParser:
             kind="paid_order",
             order_id=order_id,
             is_paid_order=True,
+        )
+
+    def _parse_reviewable_order_message(self, message: dict[str, Any]) -> IncomingMessage | None:
+        message_time = self._extract_message_time(message)
+        if self._is_expired(message_time):
+            return None
+
+        meta = self._extract_message_meta(message)
+        sender_id = str(meta.get("senderUserId") or self._extract_sender_id(message) or "unknown")
+        order_id = self.extract_order_id(message)
+        return IncomingMessage(
+            chat_id=self._strip_goofish(str(self._extract_chat_id(message))),
+            item_id=self._extract_item_id(meta, message),
+            sender_id=sender_id,
+            sender_name=str(meta.get("senderNick") or meta.get("reminderTitle") or self._extract_status_text(message) or "系统"),
+            text=self._extract_status_text(message),
+            message_id=self.extract_message_id(message) or order_id,
+            message_time=message_time,
+            raw=message,
+            is_from_self=sender_id == self.myid,
+            kind="reviewable_order",
+            order_id=order_id,
+            is_reviewable_order=True,
         )
 
     def _parse_card_update_message(self, message: dict[str, Any]) -> IncomingMessage | None:

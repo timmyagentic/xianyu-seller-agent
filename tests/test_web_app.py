@@ -1,5 +1,6 @@
 from services.delivery.store import DeliveryStore
 from services.listing.store import ListingStore
+from services.review.store import ReviewStore
 from services.web_app import (
     auto_relist_payload,
     create_auto_relist_config,
@@ -21,6 +22,15 @@ def test_web_summary_does_not_expose_cookie_value(tmp_path, monkeypatch):
         enabled=True,
         allow_playwright=True,
     )
+    review_store = ReviewStore(db_path=db_path)
+    review_store.upsert_config(item_id="item-1", content="交易顺利，感谢支持。")
+    review_store.enqueue_task(
+        order_id="order-1",
+        item_id="item-1",
+        buyer_id="buyer-1",
+        buyer_name="买家",
+        chat_id="chat-1",
+    )
 
     payload = summary_payload(db_path)
 
@@ -29,6 +39,8 @@ def test_web_summary_does_not_expose_cookie_value(tmp_path, monkeypatch):
     assert "secret_token" not in str(payload)
     assert payload["counts"]["delivery_configs"] == 1
     assert payload["counts"]["auto_relist_configs"] == 1
+    assert payload["counts"]["review_configs"] == 1
+    assert payload["counts"]["review_tasks"] == 1
 
 
 def test_web_api_creates_delivery_and_auto_relist_configs(tmp_path):
