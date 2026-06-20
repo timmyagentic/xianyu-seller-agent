@@ -95,6 +95,8 @@ MVP 支持虚拟商品发货：
 8. 重新同步商品状态，记录响应摘要、截图、商品 URL、最终状态和失败原因。
 9. 重新上架成功或商品已处于上架状态后，绑定或更新 `delivery_configs.item_id`。
 
+发货成功后的自动触发路径不同于手动补库存：鱼小铺多库存商品由平台在成交后自行扣减库存，后台 hook 不应把本地 `auto_relist_configs.target_stock` 传给 mtop API 或 Playwright 执行器。该字段只保留为本地策略和审计信息；如果刷新后商品仍是 `active`，记录 `already_active` 并停止，不重新提交发布页或修改商品信息。
+
 ## SQLite 数据模型
 
 沿用自动回复表：

@@ -200,9 +200,9 @@ python main.py listing status
 
 `listing relist` 会在 `COOKIES_STR` 存在时先通过当前账号刷新商品真实状态：优先查询在售列表，未命中时再用商品详情接口兜底，避免本地旧快照把下架/售出商品误判为 `already_active`。如果配置了 `XIANYU_RELIST_API`，会按 `xianyu-auto-reply` 的 seller mtop 操作模式签名调用该接口；未配置或 API 失败时，默认记录 `manual_required`。只传 `--allow-playwright` 时不会点击页面，只会在任务中记录需要授权浏览器执行；只有同时传入 `--allow-playwright --confirm-real-relist`，CLI 才会创建真实 Playwright 执行器。
 
-授权 Playwright 执行器只处理“重新发布页已打开目标商品并出现发布入口”的场景：它会尝试设置目标库存、点击“发布/立即发布”，并且只有页面出现“操作成功/发布成功/上架成功/已上架/在售”等确认文本后才记录 `relisted`。普通闲鱼账号的重新发布页可能没有库存输入框；这种情况下 `--stock` 会保留在本地任务和 API 边界里，但不会伪造平台库存修改成功。当前鱼小铺账号带库存重新发布默认走 seller publish rePutOn 路由，并会在点击前校验库存输入框真实写入目标值。如果检测到登录页、滑块、验证码、风控提示、找不到目标商品、找不到按钮或点击后没有确认结果，会记录 `playwright_required` 和失败原因，必要时保存截图到 `AUTO_RELIST_SCREENSHOT_DIR`。`--stock` 会作为目标库存写入任务，并传递给 mtop API 或授权浏览器执行器。mtop API 或 Playwright 确认成功后，服务会再尝试刷新一次单商品真实状态，把执行后状态写入本地快照、`listing_jobs.final_status`、响应摘要和 `listing_jobs.evidence_json`；如果刷新失败，则保留平台动作确认结果。`evidence_json` 会脱敏记录请求摘要、执行前状态、动作来源、Playwright 页面证据和执行后状态，便于 `listing status` 审计。
+授权 Playwright 执行器只处理“重新发布页已打开目标商品并出现发布入口”的场景：手动 `listing relist --stock` 会尝试设置目标库存、点击“发布/立即发布”，并且只有页面出现“操作成功/发布成功/上架成功/已上架/在售”等确认文本后才记录 `relisted`。普通闲鱼账号的重新发布页可能没有库存输入框；这种情况下 `--stock` 会保留在本地任务和 API 边界里，但不会伪造平台库存修改成功。当前鱼小铺账号带库存重新发布默认走 seller publish rePutOn 路由，并会在点击前校验库存输入框真实写入目标值。如果检测到登录页、滑块、验证码、风控提示、找不到目标商品、找不到按钮或点击后没有确认结果，会记录 `playwright_required` 和失败原因，必要时保存截图到 `AUTO_RELIST_SCREENSHOT_DIR`。`--stock` 会作为目标库存写入手动任务，并传递给 mtop API 或授权浏览器执行器；发货后的后台 hook 不传递目标库存，避免鱼小铺多库存商品每次发货后重新提交发布页。mtop API 或 Playwright 确认成功后，服务会再尝试刷新一次单商品真实状态，把执行后状态写入本地快照、`listing_jobs.final_status`、响应摘要和 `listing_jobs.evidence_json`；如果刷新失败，则保留平台动作确认结果。`evidence_json` 会脱敏记录请求摘要、执行前状态、动作来源、Playwright 页面证据和执行后状态，便于 `listing status` 审计。
 
-`listing auto-relist set` 用于配置“发货成功后自动重新上架”的商品级策略。运行时还必须开启 `AUTO_RELIST_ENABLED=true`；否则配置只会保存，不会在付款发货后触发。
+`listing auto-relist set` 用于配置“发货成功后自动重新上架”的商品级策略。运行时还必须开启 `AUTO_RELIST_ENABLED=true`；否则配置只会保存，不会在付款发货后触发。当前鱼小铺多库存商品发货后由平台自行扣减库存，后台 hook 只检查是否需要恢复上架，不会使用配置里的 `target_stock` 去补库存或修改商品发布信息。
 
 Playwright 路径会参考 `xianyu-auto-reply` 的页面初始化策略：先访问闲鱼首页或 seller 首页，再访问 `https://login.taobao.com/member/login.jhtml` 初始化登录上下文，最后进入目标发布或商品管理页。当前账号已开通鱼小铺，多库存相关操作优先使用 seller 工作台；普通发布页仍可作为无库存要求的 fallback。`listing publish` 用于发布新商品。真实发布必须传入 `--confirm-real-publish`，并且必须提供标题、描述、价格、库存和至少一张本地图片路径；遇到登录、滑块、验证码、风控、权限不足、缺少字段、找不到发布按钮或发布后没有平台确认时只记录结构化失败，不伪造成功。
 
@@ -227,7 +227,7 @@ Playwright 路径会参考 `xianyu-auto-reply` 的页面初始化策略：先访
 - `AUTO_RELIST_CONFIRM_PLAYWRIGHT=false`：发货后自动重新上架的真实浏览器点击确认开关；只有同时允许 Playwright 且该开关为 `true` 时，后台 hook 才会创建真实执行器。
 - `AUTO_RELIST_SCREENSHOT_DIR=data/relist-screenshots`：授权浏览器路径保存页面证据的本地目录，默认不提交。
 - `AUTO_RELIST_PLAYWRIGHT_HEADLESS=true`：重新上架浏览器执行器是否无头运行；也兼容旧的 `PLAYWRIGHT_HEADLESS`。
-- `AUTO_RELIST_MANAGEMENT_URL=`：可选覆盖重新上架 Playwright 目标页。为空时，无目标库存默认使用 `www.goofish.com/publish?itemId=...&editScene=rePutOn`；带目标库存默认使用 `https://seller.goofish.com/?site=COMMONPRO#/seller-item/publish?itemId=...&editScene=rePutOn`。商品管理排查可临时设为 `https://seller.goofish.com/?site=COMMONPRO#/seller-item/goods-manage`，但它不一定提供重新发布按钮。
+- `AUTO_RELIST_MANAGEMENT_URL=`：可选覆盖重新上架 Playwright 目标页。为空时，无目标库存默认使用 `www.goofish.com/publish?itemId=...&editScene=rePutOn`；带目标库存默认使用 `https://seller.goofish.com/?site=COMMONPRO#/seller-item/publish?itemId=...&editScene=rePutOn`。发货后的后台 hook 不传目标库存，因此默认走无目标库存路径，除非显式覆盖该 URL。商品管理排查可临时设为 `https://seller.goofish.com/?site=COMMONPRO#/seller-item/goods-manage`，但它不一定提供重新发布按钮。
 - `AUTO_REVIEW_ORDER_URL_TEMPLATE=`：可选评价页或订单详情页模板，包含 `{order_id}` 时可用于 `review preflight/submit` 自动生成目标 URL；为空时需要给任务设置 `review_url`。
 - `AUTO_REVIEW_SCREENSHOT_DIR=data/review-screenshots`：评价浏览器路径保存页面证据的本地目录，默认不提交。
 - `AUTO_REVIEW_PLAYWRIGHT_HEADLESS=true`：评价浏览器执行器是否无头运行；也兼容旧的 `PLAYWRIGHT_HEADLESS`。
@@ -241,7 +241,7 @@ Playwright 路径会参考 `xianyu-auto-reply` 的页面初始化策略：先访
 
 遇到兜底回复或明显不确定回复时，程序会把问题追加到 `UNKNOWN_QUESTIONS_PATH`，默认是 `data/unknown_questions.jsonl`。每行包含时间、商品 ID、会话 ID、用户问题、触发原因、机器人回复和意图，便于后续人工 review 后补进对应商品的 Markdown 知识库。该文件属于本地运行数据，不应提交。
 
-启用自动发货后，程序会监听“我已付款，等待你发货”“等待卖家发货”等付款完成消息，解析订单号、商品 ID、买家和会话，再按商品配置发货。未配置启用发货内容的商品会直接跳过，不会拉取订单详情或发送任何内容。同一订单已经写入 `sent` 日志后会跳过重复发送；如果 `AUTO_CONFIRM_DELIVERY_ENABLED=true` 且该订单尚无 `platform_confirmed` 或 `platform_already_delivered` 日志，程序会继续尝试在闲鱼订单侧确认无物流发货。`data` 库存会按订单购买数量先预占，发送成功后标记 `sent`，发送失败时保留为 `failed_retryable` 以便同一订单重试继续使用原 key。发货内容发送成功但平台确认发货失败时，结果会记录为 `sent_confirm_failed` 和 `platform_confirm_failed`，不会重复发送内容，也不会触发发货后自动重新上架；下次遇到同一订单付款消息时会只重试平台确认。发货成功后，如果同时开启 `AUTO_RELIST_ENABLED=true` 且该商品存在启用的 `auto-relist` 配置，程序会创建重新上架任务并记录目标库存；带目标库存的重新上架请求即使商品状态显示为 `active`，也会继续执行补库存/重新上架动作，不会用 `already_active` 早退。当 `AUTO_CONFIRM_DELIVERY_ENABLED=true` 时，平台确认失败会阻止这一步。如果允许 Playwright 但没有设置 `AUTO_RELIST_CONFIRM_PLAYWRIGHT=true`，任务会停在需要授权浏览器执行的结构化结果，不会点击页面；失败只影响重新上架任务日志，不回滚已发货结果。
+启用自动发货后，程序会监听“我已付款，等待你发货”“等待卖家发货”等付款完成消息，解析订单号、商品 ID、买家和会话，再按商品配置发货。未配置启用发货内容的商品会直接跳过，不会拉取订单详情或发送任何内容。同一订单已经写入 `sent` 日志后会跳过重复发送；如果 `AUTO_CONFIRM_DELIVERY_ENABLED=true` 且该订单尚无 `platform_confirmed` 或 `platform_already_delivered` 日志，程序会继续尝试在闲鱼订单侧确认无物流发货。`data` 库存会按订单购买数量先预占，发送成功后标记 `sent`，发送失败时保留为 `failed_retryable` 以便同一订单重试继续使用原 key。发货内容发送成功但平台确认发货失败时，结果会记录为 `sent_confirm_failed` 和 `platform_confirm_failed`，不会重复发送内容，也不会触发发货后自动重新上架；下次遇到同一订单付款消息时会只重试平台确认。发货成功后，如果同时开启 `AUTO_RELIST_ENABLED=true` 且该商品存在启用的 `auto-relist` 配置，程序会创建重新上架检查任务，但不会把配置里的 `target_stock` 传给 mtop API 或 Playwright 执行器；如果平台状态仍是 `active`，任务会走 `already_active` 早退，不会重新提交发布页或修改商品信息。当 `AUTO_CONFIRM_DELIVERY_ENABLED=true` 时，平台确认失败会阻止这一步。如果允许 Playwright 但没有设置 `AUTO_RELIST_CONFIRM_PLAYWRIGHT=true`，任务会停在需要授权浏览器执行的结构化结果，不会点击页面；失败只影响重新上架任务日志，不回滚已发货结果。
 
 遇到 Cookie 失效、滑块、风控、账号归属不清或真实交易风险时，程序应记录原因并交给人工处理，不实现绕过逻辑。
 
