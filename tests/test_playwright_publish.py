@@ -51,6 +51,8 @@ class FakePublishPage:
         confirm_after_click=True,
         rendered_body_text=None,
         form_rendered=True,
+        original_price_control=True,
+        shipping_controls=True,
     ):
         self.body_text = body_text
         self.rendered_body_text = rendered_body_text or body_text
@@ -66,8 +68,11 @@ class FakePublishPage:
         self.title_input = FakeElement()
         self.description_input = FakeElement()
         self.price_input = FakeElement()
+        self.original_price_input = FakeElement() if original_price_control else None
         self.stock_input = FakeElement()
         self.image_input = FakeElement()
+        self.no_shipping_option = FakeElement() if shipping_controls else None
+        self.free_shipping_option = FakeElement() if shipping_controls else None
         self.publish_button = FakeElement(on_click=self._after_publish_click)
 
     def _after_publish_click(self):
@@ -121,10 +126,16 @@ class FakePublishPage:
             return self.title_input
         if any(key in selector for key in ("描述", "详情", "desc", "contenteditable")):
             return self.description_input
+        if any(key in selector for key in ("原价", "划线价", "original-price")):
+            return self.original_price_input
         if any(key in selector for key in ("价格", "售价", "price")):
             return self.price_input
         if any(key in selector for key in ("库存", "数量", "stock", "inventory")):
             return self.stock_input
+        if "无需邮寄" in selector:
+            return self.no_shipping_option
+        if "包邮" in selector:
+            return self.free_shipping_option
         if "发布" in selector or "submit" in selector or "publish" in selector:
             return self.publish_button
         return None
@@ -156,6 +167,7 @@ def test_publish_executor_warms_login_context_before_publish_page():
     assert page.price_input.filled_values[-1] == "9.90"
     assert page.stock_input.filled_values[-1] == "7"
     assert page.image_input.uploaded_files == ["/tmp/item.png"]
+    assert page.no_shipping_option.clicked is True
     assert page.publish_button.clicked is True
     assert result.item_id == "1234567890"
     assert result.evidence["warmup_urls"] == [SELLER_HOME_URL, LOGIN_CONTEXT_URL, PROMOTION_PUBLISH_URL]
@@ -247,6 +259,72 @@ def test_publish_executor_requires_images_before_touching_browser():
     assert result.success is False
     assert result.failed_reason == "images_required"
     assert page.goto_urls == []
+
+
+def test_publish_executor_applies_requested_original_price_and_free_shipping():
+    page = FakePublishPage()
+    executor = PlaywrightPublishExecutor(
+        cookies_str="unb=seller-1; _m_h5_tk=token_123",
+        page_provider=lambda: page,
+    )
+
+    result = asyncio.run(
+        executor.publish(
+            PublishRequest(
+                title="资料包",
+                description="说明",
+                price="9.90",
+                original_price="19.90",
+                stock=7,
+                images=("/tmp/item.png",),
+                shipping_method="free",
+            )
+        )
+    )
+
+    assert result.success is True
+    assert page.original_price_input.filled_values[-1] == "19.90"
+    assert page.free_shipping_option.clicked is True
+    assert page.no_shipping_option.clicked is False
+
+
+def test_publish_executor_fails_when_requested_original_price_input_is_missing():
+    page = FakePublishPage(original_price_control=False)
+    executor = PlaywrightPublishExecutor(
+        cookies_str="unb=seller-1; _m_h5_tk=token_123",
+        page_provider=lambda: page,
+    )
+
+    result = asyncio.run(
+        executor.publish(
+            PublishRequest(
+                title="资料包",
+                description="说明",
+                price="9.90",
+                original_price="19.90",
+                stock=7,
+                images=("/tmp/item.png",),
+            )
+        )
+    )
+
+    assert result.success is False
+    assert result.failed_reason == "original_price_input_not_found"
+    assert page.publish_button.clicked is False
+
+
+def test_publish_executor_fails_when_requested_shipping_option_is_missing():
+    page = FakePublishPage(shipping_controls=False)
+    executor = PlaywrightPublishExecutor(
+        cookies_str="unb=seller-1; _m_h5_tk=token_123",
+        page_provider=lambda: page,
+    )
+
+    result = asyncio.run(executor.publish(_request()))
+
+    assert result.success is False
+    assert result.failed_reason == "shipping_method_option_not_found"
+    assert page.publish_button.clicked is False
 
 
 def test_publish_executor_does_not_report_success_without_confirmation():

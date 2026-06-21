@@ -213,7 +213,8 @@ class PlaywrightPublishExecutor:
             await self._wait(page, 3000)
             await self._fill_first(page, PRICE_SELECTORS, request.price, "price_input_not_found")
             if request.original_price.strip():
-                await self._fill_optional(page, ORIGINAL_PRICE_SELECTORS, request.original_price)
+                if not await self._fill_optional(page, ORIGINAL_PRICE_SELECTORS, request.original_price):
+                    raise PublishPageError("original_price_input_not_found", "original_price_input_not_found")
             await self._fill_first(page, STOCK_SELECTORS, str(request.stock), "stock_input_not_found")
             await self._set_shipping_method(page, request.shipping_method)
         except PublishPageError as exc:
@@ -356,25 +357,24 @@ class PlaywrightPublishExecutor:
         except AttributeError as exc:
             raise PublishPageError("image_input_not_found", "image_input_not_found") from exc
 
-    async def _set_shipping_method(self, page, shipping_method: str) -> bool:
+    async def _set_shipping_method(self, page, shipping_method: str) -> None:
         normalized = (shipping_method or "").strip().lower()
         if not normalized:
-            return False
+            return
         if normalized in {"none", "no_mail", "no-shipping", "无需邮寄"}:
             selectors = NO_SHIPPING_SELECTORS
         elif normalized in {"free", "free_shipping", "free-shipping", "包邮"}:
             selectors = FREE_SHIPPING_SELECTORS
         else:
-            return False
+            raise PublishPageError("shipping_method_unsupported", f"unsupported shipping_method: {shipping_method}")
         element = await self._find_first_visible_enabled(page, selectors)
         if not element:
-            return False
+            raise PublishPageError("shipping_method_option_not_found", normalized)
         try:
             await element.click()
             await self._wait(page, 1000)
-            return True
-        except Exception:
-            return False
+        except Exception as exc:
+            raise PublishPageError("shipping_method_select_failed", str(exc)) from exc
 
     async def _find_first_visible_enabled(self, page, selectors: tuple[str, ...], *, allow_invisible: bool = False):
         for selector in selectors:
