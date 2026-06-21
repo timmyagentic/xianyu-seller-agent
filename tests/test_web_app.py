@@ -14,6 +14,8 @@ from services.web_app import (
 def test_web_summary_does_not_expose_cookie_value(tmp_path, monkeypatch):
     db_path = str(tmp_path / "app.db")
     monkeypatch.setenv("COOKIES_STR", "unb=seller-1; _m_h5_tk=secret_token")
+    monkeypatch.setenv("AUTO_REVIEW_ENABLED", "true")
+    monkeypatch.setenv("AUTO_REVIEW_CONFIRM_PLAYWRIGHT", "true")
     DeliveryStore(db_path=db_path).add_config(item_id="item-1", name="文本", delivery_type="text", content="secret")
     ListingStore(db_path=db_path).upsert_auto_relist_config(
         item_id="item-1",
@@ -36,6 +38,8 @@ def test_web_summary_does_not_expose_cookie_value(tmp_path, monkeypatch):
 
     assert payload["success"] is True
     assert payload["env"]["cookies_present"] is True
+    assert payload["env"]["auto_review_enabled"] is True
+    assert payload["env"]["auto_review_confirm_playwright"] is True
     assert "secret_token" not in str(payload)
     assert payload["counts"]["delivery_configs"] == 1
     assert payload["counts"]["auto_relist_configs"] == 1
