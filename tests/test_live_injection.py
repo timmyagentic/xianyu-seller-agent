@@ -491,7 +491,13 @@ def test_xianyu_live_enqueues_reviewable_order_for_manual_confirmation(tmp_path)
         text="交易成功，待评价",
         message_id="msg-review-1",
         message_time=1781430000000,
-        raw={},
+        raw={
+            "3": {
+                "redReminder": "交易成功，待评价",
+                "bizOrderId": "order-1",
+                "itemId": "item-1",
+            }
+        },
         is_from_self=False,
         kind="reviewable_order",
         order_id="order-1",
@@ -521,7 +527,13 @@ def test_xianyu_live_auto_review_waits_for_confirm_flag(monkeypatch, tmp_path):
         text="交易成功，待评价",
         message_id="msg-review-1",
         message_time=1781430000000,
-        raw={},
+        raw={
+            "3": {
+                "redReminder": "交易成功，待评价",
+                "bizOrderId": "order-1",
+                "itemId": "item-1",
+            }
+        },
         is_from_self=False,
         kind="reviewable_order",
         order_id="order-1",
@@ -551,7 +563,13 @@ def test_xianyu_live_auto_reviews_when_enabled_and_confirmed(monkeypatch, tmp_pa
         text="交易成功，待评价",
         message_id="msg-review-1",
         message_time=1781430000000,
-        raw={},
+        raw={
+            "3": {
+                "redReminder": "交易成功，待评价",
+                "bizOrderId": "order-1",
+                "itemId": "item-1",
+            }
+        },
         is_from_self=False,
         kind="reviewable_order",
         order_id="order-1",
@@ -588,6 +606,45 @@ def test_xianyu_live_auto_review_requires_url_or_template_before_browser(monkeyp
         is_from_self=False,
         kind="reviewable_order",
         order_id="order-1",
+        is_reviewable_order=True,
+    )
+
+    result = asyncio.run(live.handle_reviewable_order_message(incoming, websocket))
+
+    assert result.status == "pending_confirmation"
+    assert live.review_executor.calls == []
+
+
+def test_xianyu_live_does_not_auto_submit_reviewable_order_from_plain_chat(monkeypatch, tmp_path):
+    monkeypatch.setenv("AUTO_REVIEW_ENABLED", "true")
+    monkeypatch.setenv("AUTO_REVIEW_CONFIRM_PLAYWRIGHT", "true")
+    monkeypatch.setenv("AUTO_REVIEW_ORDER_URL_TEMPLATE", "https://seller.goofish.com/review?orderId={order_id}")
+    live = XianyuLive.__new__(XianyuLive)
+    live.review_store = ReviewStore(db_path=str(tmp_path / "app.db"))
+    live.review_store.upsert_config(item_id="item-1", content="交易顺利，感谢支持。")
+    live.review_executor = FakeReviewExecutor()
+    websocket = FakeWebSocket()
+    incoming = IncomingMessage(
+        chat_id="chat-1",
+        item_id="item-1",
+        sender_id="buyer-1",
+        sender_name="买家",
+        text="orderId=1234567890123 交易成功，待评价",
+        message_id="msg-review-plain-chat",
+        message_time=1781430000000,
+        raw={
+            "1": {
+                "10": {
+                    "senderUserId": "buyer-1",
+                    "senderNick": "买家",
+                    "reminderContent": "orderId=1234567890123 交易成功，待评价",
+                    "itemId": "item-1",
+                }
+            }
+        },
+        is_from_self=False,
+        kind="reviewable_order",
+        order_id="1234567890123",
         is_reviewable_order=True,
     )
 

@@ -930,7 +930,15 @@ class XianyuLive:
             task.status,
             task.failed_reason,
         )
-        task = await self.maybe_auto_submit_review_task(task, source="reviewable_order")
+        if self.is_platform_review_reminder(incoming):
+            task = await self.maybe_auto_submit_review_task(task, source="reviewable_order")
+        else:
+            logger.info(
+                "评价订单消息缺少平台卡片信号，仅入队等待人工确认: 订单={}, 商品={}, 会话={}",
+                task.order_id,
+                task.item_id,
+                task.chat_id,
+            )
         await self.mark_message_read(websocket, incoming.chat_id, incoming.message_id)
         return task
 
