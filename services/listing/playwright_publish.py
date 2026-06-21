@@ -556,7 +556,7 @@ class PlaywrightPublishExecutor:
         )
 
     def _extract_item_id(self, current_url: str) -> str:
-        match = re.search(r"[?&]id=(\d+)", current_url)
+        match = re.search(r"[?&](?:id|itemId)=(\d+)", current_url)
         if match:
             return match.group(1)
         match = re.search(r"/item/(\d+)", current_url)

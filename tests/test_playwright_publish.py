@@ -163,6 +163,12 @@ def test_publish_executor_warms_login_context_before_publish_page():
 
 def test_publish_executor_warms_seller_workbench_for_seller_publish_page():
     page = FakePublishPage(url=SELLER_PUBLISH_URL, title="商品发布 - 闲鱼卖家工作台")
+    page.publish_button = FakeElement(
+        on_click=lambda: (
+            setattr(page, "body_text", "发布成功 已上架"),
+            setattr(page, "url", f"{SELLER_PUBLISH_URL}/success?itemId=1059667846896"),
+        )
+    )
     executor = PlaywrightPublishExecutor(
         cookies_str="unb=seller-1; _m_h5_tk=token_123",
         publish_url=SELLER_PUBLISH_URL,
@@ -173,6 +179,7 @@ def test_publish_executor_warms_seller_workbench_for_seller_publish_page():
 
     assert result.success is True
     assert page.goto_urls == [SELLER_WORKBENCH_HOME_URL, LOGIN_CONTEXT_URL, SELLER_PUBLISH_URL]
+    assert result.item_id == "1059667846896"
     assert result.evidence["warmup_urls"] == [SELLER_WORKBENCH_HOME_URL, LOGIN_CONTEXT_URL, SELLER_PUBLISH_URL]
 
 
