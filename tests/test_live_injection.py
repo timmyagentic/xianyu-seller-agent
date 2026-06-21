@@ -633,6 +633,45 @@ def test_xianyu_live_enqueues_review_reminder_from_recent_delivery_log(tmp_path)
     assert any(payload["lwp"] == "/r/MessageStatus/read" for payload in websocket.sent)
 
 
+def test_xianyu_live_does_not_auto_submit_review_from_plain_chat_keyword(monkeypatch, tmp_path):
+    monkeypatch.setenv("AUTO_REVIEW_ENABLED", "true")
+    monkeypatch.setenv("AUTO_REVIEW_CONFIRM_PLAYWRIGHT", "true")
+    monkeypatch.setenv("AUTO_REVIEW_ORDER_URL_TEMPLATE", "https://seller.goofish.com/review?orderId={order_id}")
+    live = _configured_live_for_chat(tmp_path)
+    live.review_store = ReviewStore(db_path=str(tmp_path / "app.db"))
+    live.review_store.upsert_config(item_id="item-1", content="交易顺利，感谢支持。")
+    live.review_executor = FakeReviewExecutor()
+    live.delivery_store.record_delivery_log(
+        order_no="order-1",
+        chat_id="chat-1",
+        item_id="item-1",
+        buyer_id="buyer-1",
+        config_id=1,
+        content="发货内容",
+        status="platform_confirmed",
+    )
+    websocket = FakeWebSocket()
+    incoming = IncomingMessage(
+        chat_id="chat-1",
+        item_id="item-1",
+        sender_id="buyer-1",
+        sender_name="买家",
+        text="这个订单是不是交易成功了，待评价吗？",
+        message_id="msg-review-reminder-plain-chat",
+        message_time=1781430000000,
+        raw={},
+        is_from_self=False,
+        kind="chat",
+    )
+
+    asyncio.run(live.handle_incoming_message(incoming, websocket))
+
+    tasks = live.review_store.list_tasks(status="pending_confirmation")
+    assert len(tasks) == 1
+    assert tasks[0].order_id == "order-1"
+    assert live.review_executor.calls == []
+
+
 def test_xianyu_live_keeps_missing_stock_unknown_in_item_description():
     live = XianyuLive.__new__(XianyuLive)
 

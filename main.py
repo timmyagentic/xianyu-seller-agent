@@ -535,6 +535,30 @@ class XianyuLive:
         except Exception:
             return False
 
+    def is_platform_review_reminder(self, incoming):
+        """判断待评价提醒是否来自平台/系统消息，而不是普通买家聊天关键词。"""
+        try:
+            raw = getattr(incoming, "raw", {}) or {}
+            if self.is_system_message(raw):
+                return True
+            if not isinstance(raw, dict):
+                return False
+
+            candidates = []
+            if isinstance(raw.get("1"), dict) and isinstance(raw["1"].get("10"), dict):
+                candidates.append(raw["1"]["10"])
+            for key in ("3", "4"):
+                if isinstance(raw.get(key), dict):
+                    candidates.append(raw[key])
+
+            for meta in candidates:
+                red_reminder = str(meta.get("redReminder") or "").strip()
+                if red_reminder and self.is_review_reminder_message(red_reminder):
+                    return True
+            return False
+        except Exception:
+            return False
+
     def check_toggle_keywords(self, message):
         """检查消息是否包含切换关键词"""
         message_stripped = message.strip()
@@ -952,7 +976,15 @@ class XianyuLive:
             task.status,
             task.failed_reason,
         )
-        task = await self.maybe_auto_submit_review_task(task, source="review_reminder")
+        if self.is_platform_review_reminder(incoming):
+            task = await self.maybe_auto_submit_review_task(task, source="review_reminder")
+        else:
+            logger.info(
+                "评价提醒来自普通聊天关键词，仅入队等待人工确认: 订单={}, 商品={}, 会话={}",
+                task.order_id,
+                task.item_id,
+                task.chat_id,
+            )
         await self.mark_message_read(websocket, incoming.chat_id, incoming.message_id)
         return task
 
