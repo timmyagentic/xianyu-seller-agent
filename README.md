@@ -172,6 +172,8 @@ python main.py review submit --task-id 1 --confirm-real-review
 
 如果要在买家确认收货后自动提交评价，需要同时设置 `AUTO_REVIEW_ENABLED=true` 和 `AUTO_REVIEW_CONFIRM_PLAYWRIGHT=true`，并且任务必须已有 `review_url`，或配置 `AUTO_REVIEW_ORDER_URL_TEMPLATE` 且模板包含 `{order_id}`。没有真实评价入口时，任务会保持 `pending_confirmation`，不会打开浏览器试错。第一版如果没有可推导的评价 URL，可以先让任务入队，再用 `review queue set-url` 补充页面入口。也可以配置 `AUTO_REVIEW_ORDER_URL_TEMPLATE`，模板里包含 `{order_id}` 时，`preflight`、`submit` 和运行时自动评价会按订单号生成目标页面。
 
+历史订单需要人工批量评价时，使用卖家工作台的 `评价管理` 页面而不是直接调用未知评价接口；已验证的操作路径、批量选择、发布前检查和提交后校验方式见 [docs/manual-batch-review-runbook.md](docs/manual-batch-review-runbook.md)。
+
 重新上架任务 CLI：
 
 ```bash
