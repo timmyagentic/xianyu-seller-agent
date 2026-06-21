@@ -78,10 +78,14 @@ def test_listing_publish_with_confirmation_invokes_executor_and_saves_snapshot(t
             "说明",
             "--price",
             "9.90",
+            "--original-price",
+            "19.90",
             "--stock",
             "7",
             "--image",
             "/tmp/item.png",
+            "--shipping-method",
+            "free",
             "--confirm-real-publish",
         ]
     )
@@ -92,6 +96,8 @@ def test_listing_publish_with_confirmation_invokes_executor_and_saves_snapshot(t
     assert executor.requests[0].title == "资料包"
     assert executor.requests[0].stock == 7
     assert executor.requests[0].images == ("/tmp/item.png",)
+    assert executor.requests[0].original_price == "19.90"
+    assert executor.requests[0].shipping_method == "free"
     snapshot = ListingStore(db_path=str(db_path)).get_item_snapshot("item-published-1")
     assert snapshot is not None
     assert snapshot.title == "资料包"

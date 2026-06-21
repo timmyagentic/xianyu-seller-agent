@@ -12,8 +12,10 @@ from .playwright_browser_options import (
 
 
 SELLER_HOME_URL = "https://www.goofish.com"
+SELLER_WORKBENCH_HOME_URL = "https://seller.goofish.com"
 LOGIN_CONTEXT_URL = "https://login.taobao.com/member/login.jhtml"
 PROMOTION_PUBLISH_URL = "https://www.goofish.com/publish?spm=a21ybx.item.sidebar.1.297e3da6aDZAmV"
+SELLER_PUBLISH_URL = "https://seller.goofish.com/?site=COMMONPRO&spm=a21107h.42826273.0.0#/seller-item/publish"
 COOKIE_DOMAINS = (".goofish.com", ".taobao.com", ".alipay.com")
 RISK_CONTROL_SELECTORS = (".nc-container", "#nc_1_n1z", ".captcha-container", ".nc_scale")
 RISK_CONTROL_KEYWORDS = (
@@ -40,11 +42,16 @@ TITLE_SELECTORS = (
     'textarea[name*="title"]',
 )
 DESCRIPTION_SELECTORS = (
+    'div[data-placeholder*="描述一下宝贝的品牌型号"]',
+    'div[data-placeholder*="描述"]',
+    'div[contenteditable="true"]',
     'textarea[placeholder*="描述"]',
     'textarea[placeholder*="详情"]',
     'textarea[aria-label*="描述"]',
     'textarea[name*="desc"]',
     '[contenteditable="true"]',
+    '.editor',
+    '[class*="editor"]',
 )
 PRICE_SELECTORS = (
     'input[placeholder*="价格"]',
@@ -52,6 +59,13 @@ PRICE_SELECTORS = (
     'input[aria-label*="价格"]',
     'input[name*="price"]',
     'xpath=//*[contains(normalize-space(.), "价格")]/following::input[1]',
+)
+ORIGINAL_PRICE_SELECTORS = (
+    'input[placeholder*="原价"]',
+    'input[placeholder*="划线价"]',
+    'input[aria-label*="原价"]',
+    '[class*="original-price"] input',
+    'xpath=//*[contains(normalize-space(.), "原价")]/following::input[1]',
 )
 STOCK_SELECTORS = (
     'input[placeholder*="库存"]',
@@ -77,6 +91,18 @@ PUBLISH_BUTTON_SELECTORS = (
     'button.publish-btn',
     '.publish-btn button',
     'button[type="submit"]',
+)
+NO_SHIPPING_SELECTORS = (
+    'label:has-text("无需邮寄")',
+    '.ant-radio-wrapper:has-text("无需邮寄")',
+    'span:has-text("无需邮寄")',
+    'text=无需邮寄',
+)
+FREE_SHIPPING_SELECTORS = (
+    'label:has-text("包邮")',
+    '.ant-radio-wrapper:has-text("包邮")',
+    'span:has-text("包邮")',
+    'text=包邮',
 )
 
 
@@ -176,11 +202,21 @@ class PlaywrightPublishExecutor:
             )
 
         try:
-            await self._fill_first(page, TITLE_SELECTORS, request.title, "title_input_not_found")
-            await self._fill_first(page, DESCRIPTION_SELECTORS, request.description, "description_input_not_found")
-            await self._fill_first(page, PRICE_SELECTORS, request.price, "price_input_not_found")
-            await self._fill_first(page, STOCK_SELECTORS, str(request.stock), "stock_input_not_found")
             await self._upload_images(page, request.images)
+            await self._wait(page, 5000)
+            await self._fill_first(
+                page,
+                DESCRIPTION_SELECTORS,
+                self._combined_description(request),
+                "description_input_not_found",
+            )
+            await self._wait(page, 3000)
+            await self._fill_first(page, PRICE_SELECTORS, request.price, "price_input_not_found")
+            if request.original_price.strip():
+                if not await self._fill_optional(page, ORIGINAL_PRICE_SELECTORS, request.original_price):
+                    raise PublishPageError("original_price_input_not_found", "original_price_input_not_found")
+            await self._fill_first(page, STOCK_SELECTORS, str(request.stock), "stock_input_not_found")
+            await self._set_shipping_method(page, request.shipping_method)
         except PublishPageError as exc:
             screenshot_path = await self._save_screenshot(page, "publish", exc.reason)
             return PublishResult(
@@ -242,7 +278,7 @@ class PlaywrightPublishExecutor:
         )
 
     async def _open_publish_page_with_cookie(self, page) -> None:
-        await page.goto(SELLER_HOME_URL, wait_until="domcontentloaded", timeout=self.timeout_ms)
+        await page.goto(self._warmup_home_url(), wait_until="domcontentloaded", timeout=self.timeout_ms)
         await self._wait(page, 1000)
         await page.goto(LOGIN_CONTEXT_URL, wait_until="domcontentloaded", timeout=self.timeout_ms)
         await self._wait(page, 1000)
@@ -270,6 +306,16 @@ class PlaywrightPublishExecutor:
         element = await self._find_first_visible_enabled(page, selectors)
         if not element:
             raise PublishPageError(missing_reason, missing_reason)
+        await self._fill_element(element, value)
+
+    async def _fill_optional(self, page, selectors: tuple[str, ...], value: str) -> bool:
+        element = await self._find_first_visible_enabled(page, selectors)
+        if not element:
+            return False
+        await self._fill_element(element, value)
+        return True
+
+    async def _fill_element(self, element, value: str) -> None:
         try:
             await element.click()
         except Exception:
@@ -282,7 +328,25 @@ class PlaywrightPublishExecutor:
                 await element.press("Backspace")
             except Exception:
                 pass
-        await element.fill(str(value))
+        try:
+            await element.fill(str(value))
+            return
+        except Exception:
+            pass
+        try:
+            await element.evaluate(
+                """(el, value) => {
+                    el.innerText = value;
+                    el.dispatchEvent(new InputEvent("input", {
+                        bubbles: true,
+                        inputType: "insertText",
+                        data: value
+                    }));
+                }""",
+                str(value),
+            )
+        except Exception as exc:
+            raise PublishPageError("input_fill_failed", str(exc)) from exc
 
     async def _upload_images(self, page, images: tuple[str, ...]) -> None:
         input_element = await self._find_first_visible_enabled(page, IMAGE_INPUT_SELECTORS, allow_invisible=True)
@@ -292,6 +356,25 @@ class PlaywrightPublishExecutor:
             await input_element.set_input_files(list(images))
         except AttributeError as exc:
             raise PublishPageError("image_input_not_found", "image_input_not_found") from exc
+
+    async def _set_shipping_method(self, page, shipping_method: str) -> None:
+        normalized = (shipping_method or "").strip().lower()
+        if not normalized:
+            return
+        if normalized in {"none", "no_mail", "no-shipping", "无需邮寄"}:
+            selectors = NO_SHIPPING_SELECTORS
+        elif normalized in {"free", "free_shipping", "free-shipping", "包邮"}:
+            selectors = FREE_SHIPPING_SELECTORS
+        else:
+            raise PublishPageError("shipping_method_unsupported", f"unsupported shipping_method: {shipping_method}")
+        element = await self._find_first_visible_enabled(page, selectors)
+        if not element:
+            raise PublishPageError("shipping_method_option_not_found", normalized)
+        try:
+            await element.click()
+            await self._wait(page, 1000)
+        except Exception as exc:
+            raise PublishPageError("shipping_method_select_failed", str(exc)) from exc
 
     async def _find_first_visible_enabled(self, page, selectors: tuple[str, ...], *, allow_invisible: bool = False):
         for selector in selectors:
@@ -320,6 +403,18 @@ class PlaywrightPublishExecutor:
         if any(keyword.lower() in lower_text for keyword in PERMISSION_KEYWORDS):
             return "permission_required"
         return ""
+
+    def _combined_description(self, request: PublishRequest) -> str:
+        title = request.title.strip()
+        description = request.description.strip()
+        if title and description:
+            return f"{title}\n\n{description}"
+        return title or description
+
+    def _warmup_home_url(self) -> str:
+        if "seller.goofish.com" in self.publish_url.lower():
+            return SELLER_WORKBENCH_HOME_URL
+        return SELLER_HOME_URL
 
     async def _query_selector(self, page, selector: str):
         try:
@@ -424,7 +519,7 @@ class PlaywrightPublishExecutor:
     def _execution_evidence(self, *, pre_action_page: dict, post_action_page: dict | None = None) -> dict:
         evidence = {
             "executor": "playwright_publish",
-            "warmup_urls": [SELLER_HOME_URL, LOGIN_CONTEXT_URL, self.publish_url],
+            "warmup_urls": [self._warmup_home_url(), LOGIN_CONTEXT_URL, self.publish_url],
             "pre_action_page": pre_action_page,
         }
         if post_action_page is not None:
@@ -461,7 +556,7 @@ class PlaywrightPublishExecutor:
         )
 
     def _extract_item_id(self, current_url: str) -> str:
-        match = re.search(r"[?&]id=(\d+)", current_url)
+        match = re.search(r"[?&](?:id|itemId)=(\d+)", current_url)
         if match:
             return match.group(1)
         match = re.search(r"/item/(\d+)", current_url)

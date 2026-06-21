@@ -25,6 +25,8 @@ class PublishRequest:
     price: str
     stock: int
     images: tuple[str, ...] = ()
+    original_price: str = ""
+    shipping_method: str = "none"
 
 
 @dataclass(frozen=True)
