@@ -984,8 +984,18 @@ class XianyuLive:
             task.status,
             task.failed_reason,
         )
-        if self.is_platform_review_reminder(incoming):
+        is_platform_reminder = self.is_platform_review_reminder(incoming)
+        incoming_order_id = str(getattr(incoming, "order_id", "") or "").strip()
+        if is_platform_reminder and incoming_order_id and incoming_order_id == str(task.order_id):
             task = await self.maybe_auto_submit_review_task(task, source="review_reminder")
+        elif is_platform_reminder:
+            logger.info(
+                "评价提醒缺少精确订单号或订单不匹配，仅入队等待人工确认: 订单={}, 商品={}, 会话={}, 提醒订单={}",
+                task.order_id,
+                task.item_id,
+                task.chat_id,
+                incoming_order_id,
+            )
         else:
             logger.info(
                 "评价提醒来自普通聊天关键词，仅入队等待人工确认: 订单={}, 商品={}, 会话={}",
