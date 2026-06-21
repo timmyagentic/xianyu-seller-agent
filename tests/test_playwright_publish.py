@@ -4,7 +4,9 @@ from services.listing.models import PublishRequest
 from services.listing.playwright_publish import (
     LOGIN_CONTEXT_URL,
     PROMOTION_PUBLISH_URL,
+    SELLER_PUBLISH_URL,
     SELLER_HOME_URL,
+    SELLER_WORKBENCH_HOME_URL,
     PlaywrightPublishExecutor,
 )
 
@@ -149,14 +151,29 @@ def test_publish_executor_warms_login_context_before_publish_page():
 
     assert result.success is True
     assert page.goto_urls == [SELLER_HOME_URL, LOGIN_CONTEXT_URL, PROMOTION_PUBLISH_URL]
-    assert page.title_input.filled_values[-1] == "智谱 GLM coding plan"
-    assert page.description_input.filled_values[-1] == "发货说明"
+    assert page.title_input.filled_values == []
+    assert page.description_input.filled_values[-1] == "智谱 GLM coding plan\n\n发货说明"
     assert page.price_input.filled_values[-1] == "9.90"
     assert page.stock_input.filled_values[-1] == "7"
     assert page.image_input.uploaded_files == ["/tmp/item.png"]
     assert page.publish_button.clicked is True
     assert result.item_id == "1234567890"
     assert result.evidence["warmup_urls"] == [SELLER_HOME_URL, LOGIN_CONTEXT_URL, PROMOTION_PUBLISH_URL]
+
+
+def test_publish_executor_warms_seller_workbench_for_seller_publish_page():
+    page = FakePublishPage(url=SELLER_PUBLISH_URL, title="商品发布 - 闲鱼卖家工作台")
+    executor = PlaywrightPublishExecutor(
+        cookies_str="unb=seller-1; _m_h5_tk=token_123",
+        publish_url=SELLER_PUBLISH_URL,
+        page_provider=lambda: page,
+    )
+
+    result = asyncio.run(executor.publish(_request()))
+
+    assert result.success is True
+    assert page.goto_urls == [SELLER_WORKBENCH_HOME_URL, LOGIN_CONTEXT_URL, SELLER_PUBLISH_URL]
+    assert result.evidence["warmup_urls"] == [SELLER_WORKBENCH_HOME_URL, LOGIN_CONTEXT_URL, SELLER_PUBLISH_URL]
 
 
 def test_publish_executor_waits_for_publish_form_render():
@@ -174,7 +191,8 @@ def test_publish_executor_waits_for_publish_form_render():
 
     assert result.success is True
     assert page.waited_selectors == ["input, button, textarea"]
-    assert page.title_input.filled_values[-1] == "智谱 GLM coding plan"
+    assert page.title_input.filled_values == []
+    assert page.description_input.filled_values[-1] == "智谱 GLM coding plan\n\n发货说明"
 
 
 def test_publish_executor_stops_on_no_permission_after_warmup():

@@ -1407,8 +1407,10 @@ def build_cli_parser():
     publish_parser.add_argument("--description", default="")
     publish_parser.add_argument("--description-file")
     publish_parser.add_argument("--price")
+    publish_parser.add_argument("--original-price", default="")
     publish_parser.add_argument("--stock", type=int, default=1)
     publish_parser.add_argument("--image", action="append", default=[])
+    publish_parser.add_argument("--shipping-method", default="none")
     publish_parser.add_argument("--confirm-real-publish", action="store_true")
 
     content_version_parser = listing_subparsers.add_parser("content-version", help="管理本地商品信息版本")
@@ -1762,8 +1764,10 @@ def run_cli(argv=None):
                 title = str(data.get("title") or "")
                 description = str(data.get("description") or "")
                 price = str(data.get("price") or "")
+                original_price = str(data.get("original_price") or "")
                 stock = int(data.get("stock") or 1)
                 images = tuple(str(image) for image in data.get("images", []) if str(image).strip())
+                shipping_method = str(data.get("shipping_method") or "none")
             else:
                 if not args.title:
                     parser.error("listing publish requires --title or a config path")
@@ -1772,8 +1776,10 @@ def run_cli(argv=None):
                     description = Path(args.description_file).read_text(encoding="utf-8")
                 title = args.title
                 price = args.price or ""
+                original_price = args.original_price or ""
                 stock = args.stock
                 images = tuple(args.image or [])
+                shipping_method = args.shipping_method or "none"
             if stock < 1:
                 parser.error("listing publish --stock must be greater than 0")
 
@@ -1783,6 +1789,8 @@ def run_cli(argv=None):
                 price=price,
                 stock=stock,
                 images=images,
+                original_price=original_price,
+                shipping_method=shipping_method,
             )
             executor = _build_playwright_publish_executor(
                 cookies_str=os.getenv("COOKIES_STR", ""),
