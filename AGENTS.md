@@ -33,6 +33,8 @@ python main.py
 
 每个需求都必须从最新 `origin/main` 新开独立 git worktree 和 `codex/` 前缀分支执行，不要直接在主工作区或 `main` 上改需求。推荐 worktree 位置为项目内 `.worktrees/<short-slug>`，例如 `/Volumes/SamsungDisk/Code/xianyu-seller-agent/.worktrees/runtime-doctor`；`.worktrees/` 必须保持在 `.gitignore` 中。完成后必须 push 分支并新建 PR；PR 合并后再快进本地主工作区并清理对应 worktree、本地分支和远端分支。
 
+创建 PR 默认使用 Ready 状态，不创建 Draft PR，除非用户明确要求草稿。PR 里任何 comment 或 review conversation 没有解决前禁止合并；仓库 `main` 分支保护必须保持开启 “Require conversation resolution before merging”。
+
 ## 安全与配置
 
 禁止提交 `.env`、Cookie、API Key、SQLite 运行库、买家信息和发货库存。自动发货、自动确认和自动重新上架默认关闭。遇到风控、滑块验证或 Cookie 失效时，记录原因并要求人工处理，不要实现绕过逻辑。
