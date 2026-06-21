@@ -99,6 +99,10 @@ class XianyuLive:
         self.delivery_store = DeliveryStore(db_path=db_path)
         self.listing_store = ListingStore(db_path=db_path)
         self.review_store = ReviewStore(db_path=db_path)
+        self.auto_review_enabled = os.getenv("AUTO_REVIEW_ENABLED", "false").lower() == "true"
+        self.auto_review_confirm_playwright = (
+            os.getenv("AUTO_REVIEW_CONFIRM_PLAYWRIGHT", "false").lower() == "true"
+        )
         self.delivery_service = DeliveryService(
             store=self.delivery_store,
             send_message=self.send_delivery_message,
@@ -177,7 +181,6 @@ class XianyuLive:
         return (
             self.has_enabled_delivery_config(item_id)
             or self.has_enabled_auto_relist_config(item_id)
-            or self.has_enabled_review_config(item_id)
         )
 
     async def refresh_token(self):
@@ -532,6 +535,30 @@ class XianyuLive:
         except Exception:
             return False
 
+    def is_platform_review_reminder(self, incoming):
+        """判断待评价提醒是否来自平台/系统消息，而不是普通买家聊天关键词。"""
+        try:
+            raw = getattr(incoming, "raw", {}) or {}
+            if self.is_system_message(raw):
+                return True
+            if not isinstance(raw, dict):
+                return False
+
+            candidates = []
+            if isinstance(raw.get("1"), dict) and isinstance(raw["1"].get("10"), dict):
+                candidates.append(raw["1"]["10"])
+            for key in ("3", "4"):
+                if isinstance(raw.get(key), dict):
+                    candidates.append(raw[key])
+
+            for meta in candidates:
+                red_reminder = str(meta.get("redReminder") or "").strip()
+                if red_reminder and self.is_review_reminder_message(red_reminder):
+                    return True
+            return False
+        except Exception:
+            return False
+
     def check_toggle_keywords(self, message):
         """检查消息是否包含切换关键词"""
         message_stripped = message.strip()
@@ -724,9 +751,6 @@ class XianyuLive:
         if not item_id:
             logger.warning("无法获取商品ID")
             return
-        if not self.is_item_configured_for_automation(item_id):
-            logger.info(f"商品 {item_id} 未配置自动化，跳过自动回复")
-            return
 
         # 检查是否为卖家（自己）发送的控制命令
         if incoming.is_from_self:
@@ -752,6 +776,10 @@ class XianyuLive:
             task = await self.handle_review_reminder_message(incoming, websocket)
             if task is not None:
                 return
+
+        if not self.is_item_configured_for_automation(item_id):
+            logger.info(f"商品 {item_id} 未配置自动回复/发货/上架自动化，跳过普通聊天自动回复")
+            return
 
         if not self.auto_reply_enabled:
             logger.info(f"自动回复已关闭，跳过会话 {chat_id} 的普通聊天回复")
@@ -902,6 +930,15 @@ class XianyuLive:
             task.status,
             task.failed_reason,
         )
+        if self.is_platform_review_reminder(incoming):
+            task = await self.maybe_auto_submit_review_task(task, source="reviewable_order")
+        else:
+            logger.info(
+                "评价订单消息缺少平台卡片信号，仅入队等待人工确认: 订单={}, 商品={}, 会话={}",
+                task.order_id,
+                task.item_id,
+                task.chat_id,
+            )
         await self.mark_message_read(websocket, incoming.chat_id, incoming.message_id)
         return task
 
@@ -947,8 +984,90 @@ class XianyuLive:
             task.status,
             task.failed_reason,
         )
+        is_platform_reminder = self.is_platform_review_reminder(incoming)
+        incoming_order_id = str(getattr(incoming, "order_id", "") or "").strip()
+        if is_platform_reminder and incoming_order_id and incoming_order_id == str(task.order_id):
+            task = await self.maybe_auto_submit_review_task(task, source="review_reminder")
+        elif is_platform_reminder:
+            logger.info(
+                "评价提醒缺少精确订单号或订单不匹配，仅入队等待人工确认: 订单={}, 商品={}, 会话={}, 提醒订单={}",
+                task.order_id,
+                task.item_id,
+                task.chat_id,
+                incoming_order_id,
+            )
+        else:
+            logger.info(
+                "评价提醒来自普通聊天关键词，仅入队等待人工确认: 订单={}, 商品={}, 会话={}",
+                task.order_id,
+                task.item_id,
+                task.chat_id,
+            )
         await self.mark_message_read(websocket, incoming.chat_id, incoming.message_id)
         return task
+
+    async def maybe_auto_submit_review_task(self, task, *, source: str = ""):
+        if task is None:
+            return None
+        if not getattr(self, "auto_review_enabled", os.getenv("AUTO_REVIEW_ENABLED", "false").lower() == "true"):
+            return task
+        if task.status not in {"pending_confirmation", "failed_retryable"} or not task.content.strip():
+            logger.info(
+                "跳过自动评价: 订单={}, 商品={}, 状态={}, 原因={}",
+                task.order_id,
+                task.item_id,
+                task.status,
+                task.failed_reason,
+            )
+            return task
+        if not getattr(
+            self,
+            "auto_review_confirm_playwright",
+            os.getenv("AUTO_REVIEW_CONFIRM_PLAYWRIGHT", "false").lower() == "true",
+        ):
+            logger.info(
+                "自动评价已入队但未开启真实浏览器提交确认: 订单={}, 商品={}, 来源={}",
+                task.order_id,
+                task.item_id,
+                source,
+            )
+            return task
+        if not task.review_url and "{order_id}" not in os.getenv("AUTO_REVIEW_ORDER_URL_TEMPLATE", ""):
+            logger.info(
+                "自动评价缺少评价入口，保持待确认状态: 订单={}, 商品={}, 来源={}",
+                task.order_id,
+                task.item_id,
+                source,
+            )
+            return task
+
+        executor = getattr(self, "review_executor", None)
+        if executor is None:
+            cookie_string = self.sync_runtime_cookies()
+            executor = _build_playwright_review_executor(cookies_str=cookie_string)
+
+        request = ReviewSubmissionRequest(
+            task_id=task.id,
+            order_id=task.order_id,
+            item_id=task.item_id,
+            review_url=task.review_url,
+            content=task.content,
+            rating=task.rating,
+        )
+        result = executor.submit(request)
+        if inspect.isawaitable(result):
+            result = await result
+        updated_task = self.review_store.record_submission_result(task.id, result)
+        logger.info(
+            "自动评价提交结果: 订单={}, 商品={}, 来源={}, 成功={}, 状态={}, 原因={}",
+            task.order_id,
+            task.item_id,
+            source,
+            result.success,
+            updated_task.status,
+            updated_task.failed_reason,
+        )
+        return updated_task
 
     async def handle_post_delivery_relist(self, order: OrderInfo, result):
         if getattr(result, "status", "") != "sent":

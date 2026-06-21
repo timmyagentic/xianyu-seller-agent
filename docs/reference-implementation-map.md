@@ -57,6 +57,15 @@
 | 目标库存字段 | `common/services/promotion_xianyu_publisher.py`、`promotion/backend/app/services/publish_rule_scheduler.py` | 已参考发布流程的 `stock` 字段，把重新上架目标库存保存为 `target_stock`；手动 `listing relist --stock`、preflight 和可注入 API 边界会传递该字段，Playwright 路径必须真实找到库存输入框才会点击发布，否则记录 `stock_input_not_found`；发货后自动重新上架配置保留该字段用于本地策略和审计，但后台 hook 不把它传给平台动作 |
 | 上架后绑定发货内容 | `promotion/backend/app/services/publish_coupon_card_service.py` | 已改为 upsert 本地 `delivery_configs`，重新上架成功或已处于上架状态后绑定目标 `item_id` |
 
+## 成交后评价
+
+| 能力 | 参考文件 | 迁移说明 |
+| --- | --- | --- |
+| 自动评价配置和固定文案 | `xianyu-auto-reply/common/models/auto_rate_config.py`、`backend-web/app/api/routes/auto_rate.py` | 已改为本地 `review_configs`，只支持商品级固定五星正向文案；不迁入多账号配置、用户权限、FastAPI 路由和 API 文案来源 |
+| 可评价订单识别和补评价批处理 | `xianyu-auto-reply/scheduler/app/services/scheduler/rate_task.py`、`common/services/order_service.py` | 已改写为运行时监听“交易成功/待评价/评价买家”和评价提醒消息，按 `order_id` 幂等写入 `review_tasks`；提醒消息缺少订单号时从最新成功发货日志回查；不迁入 MySQL 订单表、调度器和批量补评价任务 |
+| 评价提交 | `xianyu-auto-reply/common/services/rate_service.py`、`websocket/app/services/xianyu/rate_service.py` | 参考其评价内容、待评价状态和令牌刷新思路，但不迁入 `mtop.taobao.idle.rate.create` 直接评价接口；本项目继续使用 Playwright 浏览器路径，必须检测到真实评价入口、五星控件、文本框、提交按钮和页面确认后才标记 `submitted` |
+| 自动触发边界 | `xianyu-auto-reply/scheduler/app/services/scheduler/rate_task.py` | 已新增轻量运行时自动评价：`AUTO_REVIEW_ENABLED=true` 且 `AUTO_REVIEW_CONFIRM_PLAYWRIGHT=true` 时，评价任务入队后自动调用浏览器提交；没有 `review_url` 且没有包含 `{order_id}` 的 `AUTO_REVIEW_ORDER_URL_TEMPLATE` 时保持 `pending_confirmation`，不打开浏览器试错 |
+
 ## 发布新商品
 
 | 能力 | 参考文件 | 迁移说明 |

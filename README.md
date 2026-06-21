@@ -168,9 +168,9 @@ python main.py review preflight --task-id 1
 python main.py review submit --task-id 1 --confirm-real-review
 ```
 
-评价队列只做“自动入队、人工确认后单条提交”：运行时检测到“交易成功、交易完成、待评价、评价买家”等完成订单消息后，会按 `order_id` 幂等写入 `review_tasks`，任务初始状态为 `pending_confirmation`。每个商品需要先用 `review config set` 配置一条固定五星正向文案；没有配置的商品只记录 `skipped_no_config`，不会进入待提交队列。`review submit` 没有 `--confirm-real-review` 时只返回 `real_review_confirmation_required`，不会打开浏览器。真实提交路径通过 Playwright 访问评价 URL、点击五星、填写固定文案并提交；只有页面出现明确“评价成功/已评价/提交成功”等确认时才标记 `submitted`。遇到登录、滑块、验证码、风控、权限不足、找不到评价入口、找不到五星控件、找不到文本框、找不到提交按钮或提交后没有确认结果时，会停止并记录结构化失败和截图，不调用未知评价 API，不提供一键批量提交。
+评价队列默认只做“自动入队、人工确认后单条提交”：运行时检测到“交易成功、交易完成、待评价、评价买家”等完成订单消息后，会按 `order_id` 幂等写入 `review_tasks`，任务初始状态为 `pending_confirmation`。每个商品需要先用 `review config set` 配置一条固定五星正向文案；没有配置的商品只记录 `skipped_no_config`，不会进入待提交队列。`review submit` 没有 `--confirm-real-review` 时只返回 `real_review_confirmation_required`，不会打开浏览器。真实提交路径通过 Playwright 访问评价 URL、点击五星、填写固定文案并提交；只有页面出现明确“评价成功/已评价/提交成功”等确认时才标记 `submitted`。遇到登录、滑块、验证码、风控、权限不足、找不到评价入口、找不到五星控件、找不到文本框、找不到提交按钮或提交后没有确认结果时，会停止并记录结构化失败和截图，不调用未知评价 API，不提供一键批量提交。
 
-第一版如果没有可推导的评价 URL，可以先让任务入队，再用 `review queue set-url` 补充页面入口。也可以配置 `AUTO_REVIEW_ORDER_URL_TEMPLATE`，模板里包含 `{order_id}` 时，`preflight` 和 `submit` 会按订单号生成目标页面。
+如果要在买家确认收货后自动提交评价，需要同时设置 `AUTO_REVIEW_ENABLED=true` 和 `AUTO_REVIEW_CONFIRM_PLAYWRIGHT=true`，并且任务必须已有 `review_url`，或配置 `AUTO_REVIEW_ORDER_URL_TEMPLATE` 且模板包含 `{order_id}`。没有真实评价入口时，任务会保持 `pending_confirmation`，不会打开浏览器试错。第一版如果没有可推导的评价 URL，可以先让任务入队，再用 `review queue set-url` 补充页面入口。也可以配置 `AUTO_REVIEW_ORDER_URL_TEMPLATE`，模板里包含 `{order_id}` 时，`preflight`、`submit` 和运行时自动评价会按订单号生成目标页面。
 
 重新上架任务 CLI：
 
@@ -228,7 +228,9 @@ Playwright 路径会参考 `xianyu-auto-reply` 的页面初始化策略：先访
 - `AUTO_RELIST_SCREENSHOT_DIR=data/relist-screenshots`：授权浏览器路径保存页面证据的本地目录，默认不提交。
 - `AUTO_RELIST_PLAYWRIGHT_HEADLESS=true`：重新上架浏览器执行器是否无头运行；也兼容旧的 `PLAYWRIGHT_HEADLESS`。
 - `AUTO_RELIST_MANAGEMENT_URL=`：可选覆盖重新上架 Playwright 目标页。为空时，无目标库存默认使用 `www.goofish.com/publish?itemId=...&editScene=rePutOn`；带目标库存默认使用 `https://seller.goofish.com/?site=COMMONPRO#/seller-item/publish?itemId=...&editScene=rePutOn`。发货后的后台 hook 不传目标库存，因此默认走无目标库存路径，除非显式覆盖该 URL。商品管理排查可临时设为 `https://seller.goofish.com/?site=COMMONPRO#/seller-item/goods-manage`，但它不一定提供重新发布按钮。
-- `AUTO_REVIEW_ORDER_URL_TEMPLATE=`：可选评价页或订单详情页模板，包含 `{order_id}` 时可用于 `review preflight/submit` 自动生成目标 URL；为空时需要给任务设置 `review_url`。
+- `AUTO_REVIEW_ENABLED=false`：成交后自动评价默认关闭。开启后，运行时会在评价任务入队后尝试自动提交。
+- `AUTO_REVIEW_CONFIRM_PLAYWRIGHT=false`：自动评价的真实浏览器点击确认开关；只有同时开启 `AUTO_REVIEW_ENABLED=true` 且该开关为 `true` 时，运行时才会调用 Playwright 提交评价。
+- `AUTO_REVIEW_ORDER_URL_TEMPLATE=`：可选评价页或订单详情页模板，包含 `{order_id}` 时可用于 `review preflight/submit` 和运行时自动评价生成目标 URL；为空时需要给任务设置 `review_url`。
 - `AUTO_REVIEW_SCREENSHOT_DIR=data/review-screenshots`：评价浏览器路径保存页面证据的本地目录，默认不提交。
 - `AUTO_REVIEW_PLAYWRIGHT_HEADLESS=true`：评价浏览器执行器是否无头运行；也兼容旧的 `PLAYWRIGHT_HEADLESS`。
 - `AUTO_PUBLISH_URL=`：可选覆盖新商品发布 Playwright 目标页。鱼小铺发布可设为 `https://seller.goofish.com/?site=COMMONPRO#/seller-item/publish`；为空时使用普通 `www.goofish.com/publish`。

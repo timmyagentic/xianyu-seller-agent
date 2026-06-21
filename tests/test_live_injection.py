@@ -10,6 +10,7 @@ from services.delivery.service import DeliveryService
 from services.delivery.store import DeliveryStore
 from services.messages import MessageDeduplicator, MessageParser
 from services.messages.models import IncomingMessage
+from services.review.models import ReviewSubmissionResult
 from services.review.store import ReviewStore
 
 
@@ -124,6 +125,27 @@ class FakeReplyBot:
             }
         )
         return "自动回复"
+
+
+class FakeReviewExecutor:
+    def __init__(self, *, success=True):
+        self.success = success
+        self.calls = []
+
+    async def submit(self, request):
+        self.calls.append(request)
+        if self.success:
+            return ReviewSubmissionResult(
+                success=True,
+                status="submitted",
+                response_summary="评价成功",
+                evidence={"executor": "fake_review"},
+            )
+        return ReviewSubmissionResult(
+            success=False,
+            failed_reason="review_confirmation_missing",
+            response_summary="未检测到确认结果",
+        )
 
 
 class RecordingContextManager:
@@ -377,6 +399,40 @@ def test_xianyu_live_skips_chat_reply_for_unconfigured_item(tmp_path):
     assert websocket.sent == []
 
 
+def test_xianyu_live_review_config_alone_does_not_enable_chat_reply(tmp_path):
+    live = XianyuLive.__new__(XianyuLive)
+    live.auto_reply_enabled = True
+    live.myid = "seller-1"
+    live.manual_mode_conversations = set()
+    live.manual_mode_timestamps = {}
+    live.manual_mode_timeout = 3600
+    live.simulate_human_typing = False
+    live.delivery_store = DeliveryStore(db_path=str(tmp_path / "app.db"))
+    live.listing_store = None
+    live.review_store = ReviewStore(db_path=str(tmp_path / "app.db"))
+    live.review_store.upsert_config(item_id="item-review-only", content="交易顺利，感谢支持。")
+    live.reply_bot = FakeReplyBot()
+    live.context_manager = RecordingContextManager()
+    websocket = FakeWebSocket()
+    incoming = IncomingMessage(
+        chat_id="chat-1",
+        item_id="item-review-only",
+        sender_id="buyer-1",
+        sender_name="买家",
+        text="你好",
+        message_id="msg-chat-1",
+        message_time=1781430000000,
+        raw={},
+        is_from_self=False,
+        kind="chat",
+    )
+
+    asyncio.run(live.handle_incoming_message(incoming, websocket))
+
+    assert live.reply_bot.calls == []
+    assert websocket.sent == []
+
+
 def test_xianyu_live_allows_chat_reply_for_configured_item(tmp_path):
     live = XianyuLive.__new__(XianyuLive)
     live.auto_reply_enabled = True
@@ -435,7 +491,13 @@ def test_xianyu_live_enqueues_reviewable_order_for_manual_confirmation(tmp_path)
         text="交易成功，待评价",
         message_id="msg-review-1",
         message_time=1781430000000,
-        raw={},
+        raw={
+            "3": {
+                "redReminder": "交易成功，待评价",
+                "bizOrderId": "order-1",
+                "itemId": "item-1",
+            }
+        },
         is_from_self=False,
         kind="reviewable_order",
         order_id="order-1",
@@ -447,6 +509,149 @@ def test_xianyu_live_enqueues_reviewable_order_for_manual_confirmation(tmp_path)
     assert result.status == "pending_confirmation"
     assert live.review_store.list_tasks(status="pending_confirmation")[0].content == "交易顺利，感谢支持。"
     assert any(payload["lwp"] == "/r/MessageStatus/read" for payload in websocket.sent)
+
+
+def test_xianyu_live_auto_review_waits_for_confirm_flag(monkeypatch, tmp_path):
+    monkeypatch.setenv("AUTO_REVIEW_ENABLED", "true")
+    monkeypatch.setenv("AUTO_REVIEW_CONFIRM_PLAYWRIGHT", "false")
+    live = XianyuLive.__new__(XianyuLive)
+    live.review_store = ReviewStore(db_path=str(tmp_path / "app.db"))
+    live.review_store.upsert_config(item_id="item-1", content="交易顺利，感谢支持。")
+    live.review_executor = FakeReviewExecutor()
+    websocket = FakeWebSocket()
+    incoming = IncomingMessage(
+        chat_id="chat-1",
+        item_id="item-1",
+        sender_id="buyer-1",
+        sender_name="买家",
+        text="交易成功，待评价",
+        message_id="msg-review-1",
+        message_time=1781430000000,
+        raw={
+            "3": {
+                "redReminder": "交易成功，待评价",
+                "bizOrderId": "order-1",
+                "itemId": "item-1",
+            }
+        },
+        is_from_self=False,
+        kind="reviewable_order",
+        order_id="order-1",
+        is_reviewable_order=True,
+    )
+
+    result = asyncio.run(live.handle_reviewable_order_message(incoming, websocket))
+
+    assert result.status == "pending_confirmation"
+    assert live.review_executor.calls == []
+
+
+def test_xianyu_live_auto_reviews_when_enabled_and_confirmed(monkeypatch, tmp_path):
+    monkeypatch.setenv("AUTO_REVIEW_ENABLED", "true")
+    monkeypatch.setenv("AUTO_REVIEW_CONFIRM_PLAYWRIGHT", "true")
+    monkeypatch.setenv("AUTO_REVIEW_ORDER_URL_TEMPLATE", "https://seller.goofish.com/review?orderId={order_id}")
+    live = XianyuLive.__new__(XianyuLive)
+    live.review_store = ReviewStore(db_path=str(tmp_path / "app.db"))
+    live.review_store.upsert_config(item_id="item-1", content="交易顺利，感谢支持。")
+    live.review_executor = FakeReviewExecutor()
+    websocket = FakeWebSocket()
+    incoming = IncomingMessage(
+        chat_id="chat-1",
+        item_id="item-1",
+        sender_id="buyer-1",
+        sender_name="买家",
+        text="交易成功，待评价",
+        message_id="msg-review-1",
+        message_time=1781430000000,
+        raw={
+            "3": {
+                "redReminder": "交易成功，待评价",
+                "bizOrderId": "order-1",
+                "itemId": "item-1",
+            }
+        },
+        is_from_self=False,
+        kind="reviewable_order",
+        order_id="order-1",
+        is_reviewable_order=True,
+    )
+
+    result = asyncio.run(live.handle_reviewable_order_message(incoming, websocket))
+
+    assert result.status == "submitted"
+    assert live.review_executor.calls[0].order_id == "order-1"
+    assert live.review_executor.calls[0].content == "交易顺利，感谢支持。"
+    assert live.review_store.get_task(result.id).status == "submitted"
+    assert any(payload["lwp"] == "/r/MessageStatus/read" for payload in websocket.sent)
+
+
+def test_xianyu_live_auto_review_requires_url_or_template_before_browser(monkeypatch, tmp_path):
+    monkeypatch.setenv("AUTO_REVIEW_ENABLED", "true")
+    monkeypatch.setenv("AUTO_REVIEW_CONFIRM_PLAYWRIGHT", "true")
+    monkeypatch.delenv("AUTO_REVIEW_ORDER_URL_TEMPLATE", raising=False)
+    live = XianyuLive.__new__(XianyuLive)
+    live.review_store = ReviewStore(db_path=str(tmp_path / "app.db"))
+    live.review_store.upsert_config(item_id="item-1", content="交易顺利，感谢支持。")
+    live.review_executor = FakeReviewExecutor()
+    websocket = FakeWebSocket()
+    incoming = IncomingMessage(
+        chat_id="chat-1",
+        item_id="item-1",
+        sender_id="buyer-1",
+        sender_name="买家",
+        text="交易成功，待评价",
+        message_id="msg-review-1",
+        message_time=1781430000000,
+        raw={},
+        is_from_self=False,
+        kind="reviewable_order",
+        order_id="order-1",
+        is_reviewable_order=True,
+    )
+
+    result = asyncio.run(live.handle_reviewable_order_message(incoming, websocket))
+
+    assert result.status == "pending_confirmation"
+    assert live.review_executor.calls == []
+
+
+def test_xianyu_live_does_not_auto_submit_reviewable_order_from_plain_chat(monkeypatch, tmp_path):
+    monkeypatch.setenv("AUTO_REVIEW_ENABLED", "true")
+    monkeypatch.setenv("AUTO_REVIEW_CONFIRM_PLAYWRIGHT", "true")
+    monkeypatch.setenv("AUTO_REVIEW_ORDER_URL_TEMPLATE", "https://seller.goofish.com/review?orderId={order_id}")
+    live = XianyuLive.__new__(XianyuLive)
+    live.review_store = ReviewStore(db_path=str(tmp_path / "app.db"))
+    live.review_store.upsert_config(item_id="item-1", content="交易顺利，感谢支持。")
+    live.review_executor = FakeReviewExecutor()
+    websocket = FakeWebSocket()
+    incoming = IncomingMessage(
+        chat_id="chat-1",
+        item_id="item-1",
+        sender_id="buyer-1",
+        sender_name="买家",
+        text="orderId=1234567890123 交易成功，待评价",
+        message_id="msg-review-plain-chat",
+        message_time=1781430000000,
+        raw={
+            "1": {
+                "10": {
+                    "senderUserId": "buyer-1",
+                    "senderNick": "买家",
+                    "reminderContent": "orderId=1234567890123 交易成功，待评价",
+                    "itemId": "item-1",
+                }
+            }
+        },
+        is_from_self=False,
+        kind="reviewable_order",
+        order_id="1234567890123",
+        is_reviewable_order=True,
+    )
+
+    result = asyncio.run(live.handle_reviewable_order_message(incoming, websocket))
+
+    assert result.status == "pending_confirmation"
+    assert live.review_executor.calls == []
 
 
 def test_xianyu_live_enqueues_review_reminder_from_recent_delivery_log(tmp_path):
@@ -483,6 +688,93 @@ def test_xianyu_live_enqueues_review_reminder_from_recent_delivery_log(tmp_path)
     assert tasks[0].order_id == "order-1"
     assert tasks[0].content == "交易顺利，感谢支持。"
     assert any(payload["lwp"] == "/r/MessageStatus/read" for payload in websocket.sent)
+
+
+def test_xianyu_live_keeps_review_reminder_fallback_manual_without_order_id(monkeypatch, tmp_path):
+    monkeypatch.setenv("AUTO_REVIEW_ENABLED", "true")
+    monkeypatch.setenv("AUTO_REVIEW_CONFIRM_PLAYWRIGHT", "true")
+    monkeypatch.setenv("AUTO_REVIEW_ORDER_URL_TEMPLATE", "https://seller.goofish.com/review?orderId={order_id}")
+    live = _configured_live_for_chat(tmp_path)
+    live.review_store = ReviewStore(db_path=str(tmp_path / "app.db"))
+    live.review_store.upsert_config(item_id="item-1", content="交易顺利，感谢支持。")
+    live.review_executor = FakeReviewExecutor()
+    live.delivery_store.record_delivery_log(
+        order_no="order-1",
+        chat_id="chat-1",
+        item_id="item-1",
+        buyer_id="buyer-1",
+        config_id=1,
+        content="发货内容",
+        status="platform_confirmed",
+    )
+    live.delivery_store.record_delivery_log(
+        order_no="order-2",
+        chat_id="chat-1",
+        item_id="item-1",
+        buyer_id="buyer-1",
+        config_id=1,
+        content="发货内容",
+        status="sent",
+    )
+    websocket = FakeWebSocket()
+    incoming = IncomingMessage(
+        chat_id="chat-1",
+        item_id="item-1",
+        sender_id="buyer-1",
+        sender_name="快给ta一个评价吧～",
+        text="快给ta一个评价吧～",
+        message_id="msg-review-reminder-fallback",
+        message_time=1781430000000,
+        raw={"3": {"needPush": "false"}},
+        is_from_self=False,
+        kind="chat",
+    )
+
+    asyncio.run(live.handle_incoming_message(incoming, websocket))
+
+    tasks = live.review_store.list_tasks(status="pending_confirmation")
+    assert len(tasks) == 1
+    assert tasks[0].order_id == "order-2"
+    assert live.review_executor.calls == []
+
+
+def test_xianyu_live_does_not_auto_submit_review_from_plain_chat_keyword(monkeypatch, tmp_path):
+    monkeypatch.setenv("AUTO_REVIEW_ENABLED", "true")
+    monkeypatch.setenv("AUTO_REVIEW_CONFIRM_PLAYWRIGHT", "true")
+    monkeypatch.setenv("AUTO_REVIEW_ORDER_URL_TEMPLATE", "https://seller.goofish.com/review?orderId={order_id}")
+    live = _configured_live_for_chat(tmp_path)
+    live.review_store = ReviewStore(db_path=str(tmp_path / "app.db"))
+    live.review_store.upsert_config(item_id="item-1", content="交易顺利，感谢支持。")
+    live.review_executor = FakeReviewExecutor()
+    live.delivery_store.record_delivery_log(
+        order_no="order-1",
+        chat_id="chat-1",
+        item_id="item-1",
+        buyer_id="buyer-1",
+        config_id=1,
+        content="发货内容",
+        status="platform_confirmed",
+    )
+    websocket = FakeWebSocket()
+    incoming = IncomingMessage(
+        chat_id="chat-1",
+        item_id="item-1",
+        sender_id="buyer-1",
+        sender_name="买家",
+        text="这个订单是不是交易成功了，待评价吗？",
+        message_id="msg-review-reminder-plain-chat",
+        message_time=1781430000000,
+        raw={},
+        is_from_self=False,
+        kind="chat",
+    )
+
+    asyncio.run(live.handle_incoming_message(incoming, websocket))
+
+    tasks = live.review_store.list_tasks(status="pending_confirmation")
+    assert len(tasks) == 1
+    assert tasks[0].order_id == "order-1"
+    assert live.review_executor.calls == []
 
 
 def test_xianyu_live_keeps_missing_stock_unknown_in_item_description():

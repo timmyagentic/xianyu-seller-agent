@@ -129,6 +129,8 @@ def summary_payload(db_path: str) -> dict:
             "auto_relist_enabled": _env_bool("AUTO_RELIST_ENABLED", False),
             "auto_relist_allow_playwright": _env_bool("AUTO_RELIST_ALLOW_PLAYWRIGHT", False),
             "auto_relist_confirm_playwright": _env_bool("AUTO_RELIST_CONFIRM_PLAYWRIGHT", False),
+            "auto_review_enabled": _env_bool("AUTO_REVIEW_ENABLED", False),
+            "auto_review_confirm_playwright": _env_bool("AUTO_REVIEW_CONFIRM_PLAYWRIGHT", False),
             "cookies_present": bool(os.getenv("COOKIES_STR")),
         },
         "counts": {
